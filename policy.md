@@ -1,15 +1,15 @@
 # Privacy Policy
 
-Effective date: April 23, 2026
-Last updated: April 23, 2026
+Effective date: May 29, 2026
+Last updated: May 29, 2026
 
-This Privacy Policy describes how Pokemon Auto Chess ("we", "us", "our") processes information when you use https://pokemon-auto-chess.com and related game services.
+This Privacy Policy describes how Xom's Pokemon Auto Chess shuffle-duplication test server ("we", "us", "our") processes information when you use it.
 
 ## Who We Are
 
-Service: Pokemon Auto Chess  
-Website: https://pokemon-auto-chess.com  
-Contact: keldaan.ag@gmail.com
+Service: Xom's Pokemon Auto Chess shuffle-duplication feature branch test server
+Website: https://github.com/Xom/pokemonAutoChess
+Contact: xom@xom.io
 
 Pokemon Auto Chess is an open-source, non-profit fan project: Non profit game. For fans, by fans. All rights to The Pokemon Company.
 
@@ -21,9 +21,7 @@ We process the following categories of data.
 
 Authentication is handled through Firebase Authentication. Current sign-in methods are:
 
-- Google
 - Email/password
-- Twitter/X
 
 To operate your account, we process identifiers and profile fields such as user ID, display name, and, when available, email.
 
@@ -105,13 +103,13 @@ The app includes an in-product account deletion action. Under current server log
 
 Deleting that record does not automatically guarantee immediate deletion of every related record across all systems (for example authentication-provider records or previously created history/chat records), unless removed by separate processes.
 
-For additional deletion requests, contact: keldaan.ag@gmail.com
+For additional deletion requests, contact: xom@xom.io
 
 ## Your Rights
 
 Depending on your location, you may have rights to request access, correction, deletion, restriction, objection, or portability.
 
-To submit a request, contact: keldaan.ag@gmail.com
+To submit a request, contact: xom@xom.io
 
 ## Security
 
@@ -129,10 +127,10 @@ The service is not intended for children under 13 (or the minimum digital age in
 
 We may update this Privacy Policy. Updates are posted at:
 
-https://pokemon-auto-chess.com/privacy-policy
+https://github.com/Xom/pokemonAutoChess/blob/shuffle-duplication/policy.md
 
 ## Contact
 
 Privacy questions and requests:
 
-keldaan.ag@gmail.com
+xom@xom.io
