@@ -1,0 +1,94 @@
+import Phaser, { GameObjects } from "phaser";
+import type Player from "../../../../models/colyseus-models/player";
+import { type PVEStage } from "../../../../models/pve-stages";
+import type GameState from "../../../../rooms/states/game-state";
+import { type IPokemon } from "../../../../types";
+import { type GameMode } from "../../../../types/enum/Game";
+import { Item } from "../../../../types/enum/Item";
+import type { SpecialGameRule } from "../../../../types/enum/SpecialGameRule";
+import type { NonFunctionPropNames } from "../../../../types/HelperTypes";
+import type AnimationManager from "../animation-manager";
+import type GameScene from "../scenes/game-scene";
+import { BerryTree } from "./berry-tree";
+import PokemonSprite from "./pokemon";
+import PokemonAvatar from "./pokemon-avatar";
+import { Portal } from "./portal";
+export declare enum BoardMode {
+    PICK = "pick",
+    BATTLE = "battle",
+    TOWN = "town"
+}
+export default class BoardManager {
+    pokemons: Map<string, PokemonSprite>;
+    uid: string;
+    scene: GameScene;
+    state: GameState;
+    player: Player;
+    gameMode: GameMode;
+    mode: BoardMode;
+    animationManager: AnimationManager;
+    playerAvatar: PokemonAvatar | null;
+    opponentAvatar: PokemonAvatar | null;
+    scoutingAvatars: PokemonAvatar[];
+    pveChestGroup: Phaser.GameObjects.Group | null;
+    pveChest: Phaser.GameObjects.Sprite | null;
+    lightX: number;
+    lightY: number;
+    lightCell: Phaser.GameObjects.Sprite | null;
+    berryTrees: BerryTree[];
+    flowerPots: Phaser.GameObjects.Sprite[];
+    flowerPokemonsInPots: PokemonSprite[];
+    mulchAmountText: Phaser.GameObjects.Text | null;
+    mulchIcon: Phaser.GameObjects.Image | null;
+    groundHoles: Phaser.GameObjects.Sprite[];
+    trainingBag: Phaser.GameObjects.Sprite | null;
+    trainingRack: Phaser.GameObjects.Sprite | null;
+    portal: Portal | undefined;
+    smeargle: PokemonSprite | null;
+    specialGameRule: SpecialGameRule | null;
+    constructor(scene: GameScene, player: Player, animationManager: AnimationManager, uid: string, state: GameState);
+    victoryAnimation(winnerId: string): void;
+    addPokemonSprite(pokemon: IPokemon): PokemonSprite;
+    removePokemon(pokemonToRemove: IPokemon): void;
+    clearBoard(): void;
+    renderBoard(phaseJustChanged: boolean): void;
+    showLightCell(): void;
+    hideLightCell(): void;
+    renderBerryTrees(): void;
+    hideBerryTrees(): void;
+    getNbFlowerPots(): number;
+    renderFlowerPots(): void;
+    updateMulchCount(): void;
+    hideFlowerPots(): void;
+    renderGroundHoles(): void;
+    hideGroundHoles(): void;
+    hideTrainingBag(): void;
+    renderTrainingBag(): void;
+    animateTrainingBag(): void;
+    displayText(x: number, y: number, label: string, tweenOut?: boolean): GameObjects.Text;
+    updatePlayerAvatar(): void;
+    updateOpponentAvatar(opponentId: string | null, opponentAvatarString: string | null, isGhostBattle?: boolean): void;
+    updateScoutingAvatars(resetAll?: boolean): void;
+    updateAvatarLife(playerId: string, value: number): void;
+    battleMode(phaseJustChanged: boolean): void;
+    removePokemonsOnBoard(): void;
+    pickMode(phaseJustChanged: boolean): void;
+    minigameMode(): void;
+    setPlayer(player: Player): void;
+    updatePokemonItems(playerId: string, pokemon: IPokemon, item: Item, removed?: boolean): void;
+    updatePokemonDishes(playerId: string, pokemon: IPokemon, dishes: Item[]): void;
+    changePokemon<F extends NonFunctionPropNames<IPokemon>>(pokemon: IPokemon, field: F, value: IPokemon[F], previousValue?: IPokemon[F]): void;
+    closeTooltips(): void;
+    getBenchSize(): number;
+    showEmote(playerId: string, emote?: string): void;
+    addSmeargle(specialGameRule: SpecialGameRule): void;
+    addPvePokemons(pveStage: PVEStage, immediately: boolean): void;
+    addPortal(): void;
+    portalTransition(isRedPlayer: boolean): void;
+    addChest(x: number, y: number): {
+        chest: GameObjects.Sprite;
+        chestGroup: GameObjects.Group;
+    };
+    openChest(chestGroup: Phaser.GameObjects.Group, chest: Phaser.GameObjects.Sprite, rewards: Item[]): void;
+    showSupportItemsVfx(items: Item[], pokemonSprite: PokemonSprite, positionX: number, positionY: number): void;
+}

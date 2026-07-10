@@ -1,0 +1,33 @@
+export declare enum Status {
+    BURN = "BURN",
+    SILENCE = "SILENCE",
+    FATIGUE = "FATIGUE",
+    POISONNED = "POISONNED",
+    FREEZE = "FREEZE",
+    PROTECT = "PROTECT",
+    SLEEP = "SLEEP",
+    CONFUSION = "CONFUSION",
+    CHARM = "CHARM",
+    FLINCH = "FLINCH",
+    WOUND = "WOUND",
+    RAGE = "RAGE",
+    RESURRECTION = "RESURRECTION",
+    RESURRECTING = "RESURRECTING",
+    PARALYSIS = "PARALYSIS",
+    POKERUS = "POKERUS",
+    ARMOR_BREAK = "ARMOR_BREAK",
+    RUNE_PROTECT = "RUNE_PROTECT",
+    CURSE = "CURSE",
+    ELECTRIC_FIELD = "ELECTRIC_FIELD",
+    PSYCHIC_FIELD = "PSYCHIC_FIELD",
+    GRASS_FIELD = "GRASS_FIELD",
+    FAIRY_FIELD = "FAIRY_FIELD",
+    SPIKY_SHIELD = "SPIKY_SHIELD",
+    MAGIC_BOUNCE = "MAGIC_BOUNCE",
+    REFLECT = "REFLECT",
+    LOCKED = "LOCKED",
+    POSSESSED = "POSSESSED",
+    BLINDED = "BLINDED"
+}
+export declare const PositiveStatuses: Status[];
+export declare const DocumentedStatuses: (Status.BURN | Status.SILENCE | Status.FATIGUE | Status.POISONNED | Status.FREEZE | Status.PROTECT | Status.SLEEP | Status.CONFUSION | Status.CHARM | Status.FLINCH | Status.WOUND | Status.RAGE | Status.RESURRECTION | Status.PARALYSIS | Status.POKERUS | Status.ARMOR_BREAK | Status.RUNE_PROTECT | Status.CURSE | Status.ELECTRIC_FIELD | Status.PSYCHIC_FIELD | Status.GRASS_FIELD | Status.FAIRY_FIELD | Status.LOCKED | Status.POSSESSED | Status.BLINDED)[];

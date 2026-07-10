@@ -1,0 +1,13 @@
+export declare const TWO32: number;
+export declare const INV_TWO32: number;
+export declare const BIGTWO64: bigint;
+export declare function uint64(hi: number, lo: number): bigint;
+export declare const min: (minimum: number) => (value: number) => number;
+export declare const max: (maximum: number) => (value: number) => number;
+export declare const clamp: (num: number, min: number, max: number) => number;
+export declare const isBetween: (a: number, b: number) => (value: number) => boolean;
+export declare const roundToNDigits: (value: number, nbDigits?: number, mode?: "up" | "down" | "closest") => number;
+export declare const average: (...values: number[]) => number;
+export declare const fpsToDuration: (targetFramesPerSecond: number) => (nbFrames: number) => number;
+export declare function calcAngleDegrees(x: number, y: number): number;
+export declare function angleBetween(pointA: [number, number], pointB: [number, number]): number;

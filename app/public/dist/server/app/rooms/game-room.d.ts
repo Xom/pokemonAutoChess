@@ -1,0 +1,56 @@
+import { Dispatcher } from "@colyseus/command";
+import type { MapSchema } from "@colyseus/schema";
+import { type Client, Room } from "colyseus";
+import { MiniGame } from "../core/mini-game";
+import type { IGameUser } from "../models/colyseus-models/game-user";
+import Player from "../models/colyseus-models/player";
+import type { Pokemon } from "../models/colyseus-models/pokemon";
+import { type IGameHistorySimplePlayer, type IPokemonEntity } from "../types";
+import type { EloRank } from "../types/enum/EloRank";
+import { GameMode } from "../types/enum/Game";
+import { type Item } from "../types/enum/Item";
+import { Pkm } from "../types/enum/Pokemon";
+import { SpecialGameRule } from "../types/enum/SpecialGameRule";
+import GameState from "./states/game-state";
+export default class GameRoom extends Room<{
+    state: GameState;
+}> {
+    dispatcher: Dispatcher<this>;
+    additionalUncommonPool: Array<Pkm>;
+    additionalRarePool: Array<Pkm>;
+    additionalEpicPool: Array<Pkm>;
+    miniGame: MiniGame;
+    constructor();
+    onCreate({ users, preparationId, name, ownerName, noElo, gameMode, specialGameRule, minRank, maxRank, tournamentId, bracketId, seeds, }: {
+        users: Record<string, IGameUser>;
+        preparationId: string;
+        name: string;
+        ownerName: string;
+        noElo: boolean;
+        gameMode: GameMode;
+        specialGameRule: SpecialGameRule | null;
+        minRank: EloRank | null;
+        maxRank: EloRank | null;
+        tournamentId: string | null;
+        bracketId: string | null;
+        seeds: Record<string, string>;
+    }): Promise<void>;
+    startGame(): void;
+    onAuth(client: Client, options: any, context: any): Promise<import("firebase-admin/auth").UserRecord | undefined>;
+    onJoin(client: Client): Promise<void>;
+    onDrop(client: Client, code: number): Promise<void>;
+    onReconnect(client: Client): Promise<void>;
+    onLeave(client: Client, code: number): Promise<void>;
+    onDispose(): Promise<void>;
+    updatePlayerAfterGame(player: Player, hasLeftBeforeEnd: boolean): Promise<void>;
+    transformToSimplePlayer(player: Player): IGameHistorySimplePlayer;
+    spawnOnBench(player: Player, pkm: Pkm, anim?: "fishing" | "spawn"): void;
+    checkEvolutionsAfterPokemonAcquired(playerId: string): boolean;
+    checkEvolutionsAfterItemAcquired(playerId: string, pokemon: Pokemon, itemAcquired: Item): Pokemon | void;
+    getNumberOfPlayersAlive(players: MapSchema<Player>): number;
+    getTeamSize(board: MapSchema<Pokemon>): number;
+    pickChoice(playerId: string, choiceId: string, choiceIndex: number, bypassLackOfSpace?: boolean): false | undefined;
+    computeRoundDamage(opponentTeam: MapSchema<IPokemonEntity>, stageLevel: number): number;
+    rankPlayers(): void;
+    onRoomDeleted(roomId: any): void;
+}

@@ -1,0 +1,40 @@
+export declare enum Synergy {
+    NORMAL = "NORMAL",
+    FLYING = "FLYING",
+    FIELD = "FIELD",
+    DARK = "DARK",
+    GROUND = "GROUND",
+    PSYCHIC = "PSYCHIC",
+    GRASS = "GRASS",
+    BUG = "BUG",
+    WATER = "WATER",
+    AQUATIC = "AQUATIC",
+    POISON = "POISON",
+    FAIRY = "FAIRY",
+    FIGHTING = "FIGHTING",
+    FIRE = "FIRE",
+    GHOST = "GHOST",
+    ROCK = "ROCK",
+    MONSTER = "MONSTER",
+    AMORPHOUS = "AMORPHOUS",
+    WILD = "WILD",
+    SOUND = "SOUND",
+    FLORA = "FLORA",
+    STEEL = "STEEL",
+    ELECTRIC = "ELECTRIC",
+    ICE = "ICE",
+    BABY = "BABY",
+    HUMAN = "HUMAN",
+    DRAGON = "DRAGON",
+    LIGHT = "LIGHT",
+    GOURMET = "GOURMET",
+    FOSSIL = "FOSSIL",
+    ARTIFICIAL = "ARTIFICIAL"
+}
+export declare const SynergyArray: Synergy[];
+export declare const SynergyInteger: {
+    [key in Synergy]: number;
+};
+export declare const SynergyByInteger: {
+    [index: string]: Synergy;
+};

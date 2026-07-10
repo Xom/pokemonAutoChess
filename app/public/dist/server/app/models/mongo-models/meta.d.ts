@@ -1,0 +1,36 @@
+import type { Pkm } from "../../types/enum/Pokemon";
+import type { Synergy } from "../../types/enum/Synergy";
+export interface ITeam {
+    cluster_id: string;
+    rank: number;
+    x: number;
+    y: number;
+    pokemons: {
+        [key in Pkm]?: number;
+    };
+}
+export interface IMeta {
+    cluster_id: string;
+    count: number;
+    ratio: number;
+    winrate: number;
+    mean_rank: number;
+    types: {
+        [key in Synergy]?: number;
+    };
+    pokemons: {
+        [key in Pkm]?: number;
+    };
+    teams: ITeam[];
+    x: number;
+    y: number;
+}
+declare const _default: import("mongoose").Model<IMeta, {}, {}, {}, import("mongoose").Document<unknown, {}, IMeta, {}, import("mongoose").DefaultSchemaOptions> & IMeta & {
+    _id: import("mongoose").Types.ObjectId;
+} & {
+    __v: number;
+} & {
+    id: string;
+}, any, IMeta>;
+export default _default;
+export declare function fetchMeta(): Promise<IMeta[]>;

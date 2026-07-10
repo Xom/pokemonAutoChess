@@ -1,0 +1,10 @@
+import { type IPlayer } from "../types";
+import { FlowerPot } from "../types/enum/FlowerPot";
+import { Pkm } from "../types/enum/Pokemon";
+export declare const FLOWER_POTS_POSITIONS_BLUE: number[][];
+export declare const FLOWER_POTS_POSITIONS_RED: number[][];
+export declare const FlowerMonByPot: Record<FlowerPot, Pkm[]>;
+export declare function getFlowerPotsUnlocked(player: IPlayer): FlowerPot[];
+export declare function getFlowerMonByPot(pot: FlowerPot): Pkm[];
+export declare const FlowerPotMons: Pkm[];
+export declare const MulchStockCaps: number[];

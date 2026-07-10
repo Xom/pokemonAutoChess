@@ -1,0 +1,76 @@
+import type { SchemaCallbackProxy } from "@colyseus/schema";
+import { type Room } from "@colyseus/sdk";
+import Phaser from "phaser";
+import type { PokemonEntity } from "../../../core/pokemon-entity";
+import type Simulation from "../../../core/simulation";
+import type Player from "../../../models/colyseus-models/player";
+import type GameState from "../../../rooms/states/game-state";
+import { type IDragDropCombineMessage, type IDragDropItemMessage, type IDragDropMessage, type IPlayer, type IPokemon } from "../../../types";
+import type { Ability } from "../../../types/enum/Ability";
+import { type AttackType, type HealType, type Orientation } from "../../../types/enum/Game";
+import { Weather } from "../../../types/enum/Weather";
+import type { DisplayText } from "../../../types/strings/DisplayText";
+import GameScene from "./scenes/game-scene";
+declare class GameContainer {
+    room: Room<GameState>;
+    $: SchemaCallbackProxy<GameState>;
+    div: HTMLDivElement;
+    game: Phaser.Game | undefined;
+    player: Player | undefined;
+    simulation: Simulation | undefined;
+    uid: string;
+    spectate: boolean;
+    constructor(div: HTMLDivElement, uid: string, room: Room<GameState>);
+    resetSimulation(): void;
+    initializeSimulation(simulation: Simulation): void;
+    initializePokemon(pokemon: PokemonEntity, simulation: Simulation, playerId: string): void;
+    initializeGame(): void;
+    resize(): void;
+    initializeEvents(): void;
+    initializePlayer(player: Player): void;
+    initializeSpectactor(uid: string): void;
+    get gameScene(): GameScene | undefined;
+    get playerIdSpectated(): string;
+    get simulationId(): string;
+    handleWeatherChange(simulation: Simulation, value: Weather): void;
+    handleDisplayHeal(message: {
+        type: HealType;
+        id: string;
+        x: number;
+        y: number;
+        index: string;
+        amount: number;
+    }): void;
+    handleDisplayDamage(message: {
+        type: AttackType;
+        id: string;
+        x: number;
+        y: number;
+        index: string;
+        amount: number;
+    }): void;
+    handleDisplayAbility(message: {
+        id: string;
+        skill: Ability;
+        orientation: Orientation;
+        positionX: number;
+        positionY: number;
+        targetX?: number;
+        targetY?: number;
+        delay?: number;
+        ap?: number;
+    }): void;
+    handleBoardPokemonAdd(player: IPlayer, pokemon: IPokemon): void;
+    handleDragDropCancel(message: {
+        updateBoard: boolean;
+        updateItems: boolean;
+        text?: DisplayText;
+        pokemonId?: string;
+    }): void;
+    setPlayer(player: Player): void;
+    setSimulation(simulation: Simulation): void;
+    onDragDrop(event: CustomEvent<IDragDropMessage>): void;
+    onDragDropCombine(event: CustomEvent<IDragDropCombineMessage>): void;
+    onDragDropItem(event: CustomEvent<IDragDropItemMessage>): void;
+}
+export default GameContainer;
