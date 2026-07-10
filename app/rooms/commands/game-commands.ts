@@ -1,6 +1,8 @@
 import { Command } from "@colyseus/command"
 import { SetSchema, StateView } from "@colyseus/schema"
 import { type Client, updateLobby } from "colyseus"
+import { createPcg32, randomInt, getOutput, stepState } from "pcg"
+import { randomNeedle, randomNeedles } from "shuffle-duplication"
 import {
   AdditionalPicksStages,
   BOARD_SIDE_HEIGHT,
@@ -98,7 +100,9 @@ import {
   SynergyGivenByItem,
   SynergyStones,
   Tools,
-  UnholdableItems
+  UnholdableItems,
+  ItemInteger,
+  ItemByInteger,
 } from "../../types/enum/Item"
 import { Passive } from "../../types/enum/Passive"
 import {
@@ -106,7 +110,9 @@ import {
   PkmIndex,
   PkmRegionalVariants,
   Unowns,
-  UnownsForScribble
+  UnownsForScribble,
+  PkmInteger,
+  PkmByInteger,
 } from "../../types/enum/Pokemon"
 import { SpecialGameRule } from "../../types/enum/SpecialGameRule"
 import { Synergy } from "../../types/enum/Synergy"
@@ -131,7 +137,14 @@ import {
   chance,
   pickNRandomIn,
   pickRandomIn,
-  randomBetween
+  randomBetween,
+  shuffleArray,
+  pcgRandomFloat,
+  PRNG_N_PVE_SHINY,
+  PRNG_P_OFFSET_ITEM_PICK,
+  PRNG_P_OFFSET_ITEM_FREE,
+  PRNG_P_OFFSET_BERRY_TREE,
+  PRNG_P_OFFSET_ADD,
 } from "../../utils/random"
 import { resetArraySchema, schemaValues } from "../../utils/schemas"
 import { getWeather } from "../../utils/weather"
@@ -593,15 +606,26 @@ export class OnDragDropCombineCommand extends Command<
     if (itemA === Item.EXCHANGE_TICKET || itemB === Item.EXCHANGE_TICKET) {
       const exchangedItem = itemA === Item.EXCHANGE_TICKET ? itemB : itemA
       if (ItemComponentsNoScarf.includes(exchangedItem)) {
-        result = pickRandomIn(
-          ItemComponentsNoFossilOrScarf.filter((i) => i !== exchangedItem)
-        )
+        result = ItemByInteger[parseInt(
+          randomNeedle(player.rngState, Object.fromEntries(
+            ItemComponentsNoFossilOrScarf.filter(item => item !== exchangedItem)
+              .map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+          ))!
+        ) - PRNG_P_OFFSET_ITEM_FREE]
       } else if (SynergyStones.includes(exchangedItem)) {
-        result = pickRandomIn(SynergyStones.filter((i) => i !== exchangedItem))
+        result = ItemByInteger[parseInt(
+          randomNeedle(player.rngState, Object.fromEntries(
+            SynergyStones.filter(item => item !== exchangedItem)
+              .map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+          ))!
+        ) - PRNG_P_OFFSET_ITEM_FREE]
       } else if (CraftableItemsNoScarves.includes(exchangedItem)) {
-        result = pickRandomIn(
-          CraftableNoStonesOrScarves.filter((i) => i !== exchangedItem)
-        )
+        result = ItemByInteger[parseInt(
+          randomNeedle(player.rngState, Object.fromEntries(
+            CraftableNoStonesOrScarves.filter(item => item !== exchangedItem)
+              .map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+          ))!
+        ) - PRNG_P_OFFSET_ITEM_FREE]
       } else {
         client.send(Transfer.DRAG_DROP_CANCEL, message)
         return
@@ -733,11 +757,12 @@ export class OnDragDropItemCommand extends Command<
         player.berryTreesStages[index] = 3
         removeInArray(player.items, item)
       } else if (item === Item.AMAZE_MULCH && index < nbTrees) {
-        player.berryTreesType[index] = pickRandomIn(
-          GOLDEN_BERRY_TREE_TYPES.filter(
-            (b) => player.berryTreesType.includes(b) === false
-          )
-        )
+        player.berryTreesType[index] = ItemByInteger[parseInt(
+          randomNeedle(player.rngState, Object.fromEntries(
+            GOLDEN_BERRY_TREE_TYPES.filter(b => !player.berryTreesType.includes(b))
+              .map(item => [ItemInteger[item] + PRNG_P_OFFSET_BERRY_TREE, 1])
+          ))!
+        ) - PRNG_P_OFFSET_BERRY_TREE]
         player.berryTreesStages[index] = 3
         removeInArray(player.items, item)
       }
@@ -1265,28 +1290,32 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
             ? this.room.additionalRarePool
             : this.room.additionalEpicPool
       let remainingAddPicks = 8
-      this.state.players.forEach((player: Player) => {
+      shuffleArray(schemaValues(this.state.players)).forEach((player: Player) => {
         if (!player.isBot) {
-          const items = pickNRandomIn(ItemComponentsNoScarf, 3)
-          const pokemons: Pkm[] = []
-          for (let i = 0; i < 3; i++) {
-            const p = pool.pop()
-            if (p) {
-              // If the Pokemon has a regional variant in the player's region, show that instead of the base form.
-              // Base form will still be added to the pool for all players
-              const regionalVariants = (PkmRegionalVariants[p] ?? []).filter(
-                (pkm) =>
-                  new PokemonClasses[pkm](pkm).isInRegion(
-                    player.map === "town" ? DungeonPMDO.AmpPlains : player.map
-                  )
-              )
-              if (regionalVariants.length > 0) {
-                pokemons.push(pickRandomIn(regionalVariants))
-              } else {
-                pokemons.push(p)
-              }
+          const pokemons = randomNeedles(player.rngState, Object.fromEntries(
+            pool.map(pkm => [PkmInteger[pkm] + PRNG_P_OFFSET_ADD, 1])
+          ), 3, false).map(needleId => PkmByInteger[parseInt(needleId) - PRNG_P_OFFSET_ADD])
+
+          for (let i = 0; i < pokemons.length; i++) {
+            const p = pokemons[i]
+            pool.splice(pool.indexOf(p), 1)
+            // If the Pokemon has a regional variant in the player's region, show that instead of the base form.
+            // Base form will still be added to the pool for all players
+            const regionalVariants = (PkmRegionalVariants[p] ?? []).filter(
+              (pkm) =>
+                new PokemonClasses[pkm](pkm).isInRegion(
+                  player.map === "town" ? DungeonPMDO.AmpPlains : player.map
+                )
+            )
+            if (regionalVariants.length > 0) {
+              pokemons[i] = pickRandomIn(regionalVariants)
             }
           }
+
+          const items = randomNeedles(player.rngState, Object.fromEntries(
+            ItemComponentsNoScarf.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1])
+          ), pokemons.length, false).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_PICK])
+
           player.choices.push(
             new PlayerChoice({
               type: "addPick",
@@ -1311,7 +1340,7 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
 
     const commands = new Array<Command>()
 
-    this.state.players.forEach((p) => this.updatePlayerBetweenStages(p))
+    shuffleArray(schemaValues(this.state.players)).forEach((p) => this.updatePlayerBetweenStages(p))
 
     this.spawnWanderingPokemons()
 
@@ -1322,7 +1351,7 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
         this.state.townEncounter === TownEncounters.CELEBI ||
         (this.state.specialGameRule === SpecialGameRule.SHINY_HUNTER &&
           pveStage.shinyChance !== undefined) ||
-        chance(pveStage.shinyChance ?? 0)
+        (pveStage.shinyChance ? pcgRandomFloat(stepState(this.state.stageLevel, createPcg32({}, this.state.nonPlayerRngState.seed, PRNG_N_PVE_SHINY)))[0] < pveStage.shinyChance : false)
     }
 
     return commands
@@ -1678,7 +1707,7 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
       this.state.stageLevel += 1
       this.room.setMetadata({ stageLevel: this.state.stageLevel })
       this.computeIncome(isPVE, this.state.specialGameRule)
-      this.state.players.forEach((player: Player) => {
+      shuffleArray(schemaValues(this.state.players)).forEach((player: Player) => {
         player.wanderers.clear()
         if (player.alive) {
           // Fake bots XP bar
@@ -1807,7 +1836,7 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
 
     const pveStage = PVEStages[this.state.stageLevel]
     if (pveStage) {
-      this.state.players.forEach((player: Player) => {
+      shuffleArray(schemaValues(this.state.players)).forEach((player: Player) => {
         if (player.alive) {
           player.opponentId = "pve"
           player.opponentName = pveStage.name
@@ -2011,6 +2040,7 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
             const pkm = this.state.shop.pickPokemon(
               player,
               this.state,
+              0,
               -1,
               true
             )

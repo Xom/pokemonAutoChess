@@ -1,3 +1,5 @@
+import type { WeightMap } from "shuffle-duplication"
+import { randomNeedle, randomNeedles } from "shuffle-duplication"
 import { Emotion } from "../types"
 import { Stat } from "../types/enum/Game"
 import {
@@ -5,15 +7,16 @@ import {
   CraftableNoStonesOrScarves,
   Item,
   ItemComponentsNoFossilOrScarf,
-  ShinyItems
+  ShinyItems,
+  ItemInteger,
+  ItemByInteger,
 } from "../types/enum/Item"
 import { Pkm } from "../types/enum/Pokemon"
 import { Synergy } from "../types/enum/Synergy"
 import {
-  chance,
-  pickNRandomIn,
-  pickRandomIn,
-  randomWeighted
+  PRNG_P_OFFSET_ITEM_PICK,
+  PRNG_P_OFFSET_ITEM_FREE,
+  PRNG_P_OFFSET_BERRY_TREE,
 } from "../utils/random"
 import { schemaValues } from "../utils/schemas"
 import type Player from "./colyseus-models/player"
@@ -39,6 +42,10 @@ export type PVEStage = {
   statBoosts?: { [stat in Stat]?: number }
 }
 
+const WEIGHTS_FOR_CHARCADET_ARMOR: WeightMap = {}
+WEIGHTS_FOR_CHARCADET_ARMOR[ItemInteger[Item.AUSPICIOUS_ARMOR] + PRNG_P_OFFSET_BERRY_TREE] = 1
+WEIGHTS_FOR_CHARCADET_ARMOR[ItemInteger[Item.MALICIOUS_ARMOR] + PRNG_P_OFFSET_BERRY_TREE] = 1
+
 export const PVEStages: { [turn: number]: PVEStage } = {
   1: {
     name: "pkm.MAGIKARP",
@@ -50,7 +57,11 @@ export const PVEStages: { [turn: number]: PVEStage } = {
     shinyChance: 1 / 40,
     rewards: ItemComponentsNoFossilOrScarf,
     getRewards(player: Player) {
-      const randomComponent = pickRandomIn(ItemComponentsNoFossilOrScarf)
+      const randomComponent = ItemByInteger[parseInt(
+        randomNeedle(player.rngState, Object.fromEntries(
+          ItemComponentsNoFossilOrScarf.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+        ))!
+      ) - PRNG_P_OFFSET_ITEM_FREE]
       player.randomComponentsGiven.push(randomComponent)
       return [randomComponent]
     }
@@ -65,12 +76,10 @@ export const PVEStages: { [turn: number]: PVEStage } = {
     ],
     rewards: ItemComponentsNoFossilOrScarf,
     getRewardsPropositions(player: Player) {
-      return pickNRandomIn(
-        ItemComponentsNoFossilOrScarf.filter(
-          (i) => player.randomComponentsGiven.includes(i) === false
-        ),
-        3
-      )
+      return randomNeedles(player.rngState, Object.fromEntries(
+        ItemComponentsNoFossilOrScarf.filter(item => !player.randomComponentsGiven.includes(item))
+          .map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1])
+      ), 3, false).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_PICK])
     }
   },
 
@@ -84,11 +93,12 @@ export const PVEStages: { [turn: number]: PVEStage } = {
     ],
     rewards: ItemComponentsNoFossilOrScarf,
     getRewards(player) {
-      const randomComponent = pickRandomIn(
-        ItemComponentsNoFossilOrScarf.filter(
-          (i) => player.randomComponentsGiven.includes(i) === false
-        )
-      )
+      const randomComponent = ItemByInteger[parseInt(
+        randomNeedle(player.rngState, Object.fromEntries(
+          ItemComponentsNoFossilOrScarf.filter(item => !player.randomComponentsGiven.includes(item))
+            .map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+        ))!
+      ) - PRNG_P_OFFSET_ITEM_FREE]
       player.randomComponentsGiven.push(randomComponent)
       return [randomComponent]
     }
@@ -101,9 +111,12 @@ export const PVEStages: { [turn: number]: PVEStage } = {
     marowakItems: [[Item.KINGS_ROCK]],
     shinyChance: 1 / 40,
     rewards: [...ItemComponentsNoFossilOrScarf, Item.RED_SCALE],
-    getRewards(_player: Player, shinyEncounter: boolean) {
-      if (shinyEncounter) return [Item.RED_SCALE]
-      else return pickNRandomIn(ItemComponentsNoFossilOrScarf, 1)
+    getRewards(player: Player, shinyEncounter: boolean) {
+      return [shinyEncounter ? Item.RED_SCALE : ItemByInteger[parseInt(
+        randomNeedle(player.rngState, Object.fromEntries(
+          ItemComponentsNoFossilOrScarf.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+        ))!
+      ) - PRNG_P_OFFSET_ITEM_FREE]]
     }
   },
 
@@ -133,25 +146,26 @@ export const PVEStages: { [turn: number]: PVEStage } = {
             ? Item.AUSPICIOUS_ARMOR
             : psyLevel < ghostLevel
               ? Item.MALICIOUS_ARMOR
-              : chance(1 / 2)
-                ? Item.AUSPICIOUS_ARMOR
-                : Item.MALICIOUS_ARMOR
+              : ItemByInteger[parseInt(randomNeedle(player.rngState, WEIGHTS_FOR_CHARCADET_ARMOR)!) - PRNG_P_OFFSET_BERRY_TREE]
         rewards.push(armorReceived)
       }
       return rewards
     },
-    getRewardsPropositions(_player: Player, shinyEncounter: boolean) {
+    getRewardsPropositions(player: Player, shinyEncounter: boolean) {
+      const weights: WeightMap = {}
       if (shinyEncounter) {
-        return pickNRandomIn(
-          ShinyItems.filter((o) => o !== Item.RED_SCALE),
-          3
-        )
+        for (const item of ShinyItems) {
+          if (item !== Item.RED_SCALE) {
+            weights[ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK] = 1
+          }
+        }
       } else {
-        return pickNRandomIn(
-          [...ItemComponentsNoFossilOrScarf, Item.FOSSIL_STONE],
-          3
-        )
+        for (const item of ItemComponentsNoFossilOrScarf) {
+          weights[ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK] = 1
+        }
+        weights[ItemInteger[Item.FOSSIL_STONE] + PRNG_P_OFFSET_ITEM_PICK] = 1
       }
+      return randomNeedles(player.rngState, weights, 3, false).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_PICK])
     }
   },
 
@@ -171,14 +185,12 @@ export const PVEStages: { [turn: number]: PVEStage } = {
     marowakItems: [[Item.COMET_SHARD], [Item.SACRED_ASH]],
     rewards: ItemComponentsNoFossilOrScarf,
     getRewards(player: Player) {
-      const componentsWeights = ItemComponentsNoFossilOrScarf.reduce((o, i) => {
-        return { ...o, [i]: player.randomComponentsGiven.includes(i) ? 1 : 2 } // twice the weight if the player doesn't have it yet
-      }, {})
-      const randomComponentsGiven: Item[] = []
-      for (let i = 0; i < 2; i++) {
-        randomComponentsGiven.push(randomWeighted(componentsWeights)!)
-      }
-
+      const randomComponentsGiven = randomNeedles(player.rngState, Object.fromEntries(
+        ItemComponentsNoFossilOrScarf.map(item => [
+          ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE,
+          player.randomComponentsGiven.includes(item) ? 1 : 2 // twice the weight if the player doesn't have it yet
+        ])
+      ), 2, true).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_FREE])
       player.randomComponentsGiven.push(...randomComponentsGiven)
       return randomComponentsGiven
     }
@@ -213,13 +225,15 @@ export const PVEStages: { [turn: number]: PVEStage } = {
       return []
     },
     getRewardsPropositions(player: Player) {
-      const rewards = pickNRandomIn(CraftableNoStonesOrScarves, 2)
-      rewards.push(
-        pickRandomIn(
-          CraftableItemsNoScarves.filter((o) => !rewards.includes(o))
-        )
-      )
-      return rewards
+      const thirdChoiceWeights = Object.fromEntries(CraftableItemsNoScarves.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1]))
+      const needleIds: string[] = randomNeedles(player.rngState, Object.fromEntries(
+        CraftableNoStonesOrScarves.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1])
+      ), 2, false)
+      for (const needleId of needleIds) {
+        delete thirdChoiceWeights[needleId]
+      }
+      needleIds.push(randomNeedle(player.rngState, thirdChoiceWeights)!)
+      return needleIds.map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_PICK])
     }
   },
 
@@ -248,13 +262,15 @@ export const PVEStages: { [turn: number]: PVEStage } = {
     ],
     rewards: CraftableItemsNoScarves,
     getRewardsPropositions(player: Player) {
-      const rewards = pickNRandomIn(CraftableNoStonesOrScarves, 2)
-      rewards.push(
-        pickRandomIn(
-          CraftableItemsNoScarves.filter((o) => !rewards.includes(o))
-        )
-      )
-      return rewards
+      const thirdChoiceWeights = Object.fromEntries(CraftableItemsNoScarves.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1]))
+      const needleIds: string[] = randomNeedles(player.rngState, Object.fromEntries(
+        CraftableNoStonesOrScarves.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1])
+      ), 2, false)
+      for (const needleId of needleIds) {
+        delete thirdChoiceWeights[needleId]
+      }
+      needleIds.push(randomNeedle(player.rngState, thirdChoiceWeights)!)
+      return needleIds.map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_PICK])
     }
   },
 
@@ -280,13 +296,15 @@ export const PVEStages: { [turn: number]: PVEStage } = {
     ],
     rewards: CraftableItemsNoScarves,
     getRewardsPropositions(player: Player) {
-      const rewards = pickNRandomIn(CraftableNoStonesOrScarves, 2)
-      rewards.push(
-        pickRandomIn(
-          CraftableItemsNoScarves.filter((o) => !rewards.includes(o))
-        )
-      )
-      return rewards
+      const thirdChoiceWeights = Object.fromEntries(CraftableItemsNoScarves.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1]))
+      const needleIds: string[] = randomNeedles(player.rngState, Object.fromEntries(
+        CraftableNoStonesOrScarves.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1])
+      ), 2, false)
+      for (const needleId of needleIds) {
+        delete thirdChoiceWeights[needleId]
+      }
+      needleIds.push(randomNeedle(player.rngState, thirdChoiceWeights)!)
+      return needleIds.map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_PICK])
     }
   },
 
@@ -315,13 +333,15 @@ export const PVEStages: { [turn: number]: PVEStage } = {
     ],
     rewards: CraftableItemsNoScarves,
     getRewardsPropositions(player: Player) {
-      const rewards = pickNRandomIn(CraftableNoStonesOrScarves, 2)
-      rewards.push(
-        pickRandomIn(
-          CraftableItemsNoScarves.filter((o) => !rewards.includes(o))
-        )
-      )
-      return rewards
+      const thirdChoiceWeights = Object.fromEntries(CraftableItemsNoScarves.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1]))
+      const needleIds: string[] = randomNeedles(player.rngState, Object.fromEntries(
+        CraftableNoStonesOrScarves.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1])
+      ), 2, false)
+      for (const needleId of needleIds) {
+        delete thirdChoiceWeights[needleId]
+      }
+      needleIds.push(randomNeedle(player.rngState, thirdChoiceWeights)!)
+      return needleIds.map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_PICK])
     }
   },
 

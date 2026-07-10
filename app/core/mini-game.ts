@@ -21,6 +21,9 @@ import { PlayerChoice } from "../models/colyseus-models/player-choice"
 import { PokemonAvatarModel } from "../models/colyseus-models/pokemon-avatar"
 import { Portal, SynergySymbol } from "../models/colyseus-models/portal"
 import { getSynergyStep } from "../models/colyseus-models/synergies"
+import { createPcg32, randomInt, getOutput, stepState } from "pcg"
+import { createHaystack, randomNeedle, randomNeedles, randomNeedleFromHaystacks } from "shuffle-duplication"
+import type { Haystack, WeightMap } from "shuffle-duplication"
 import type GameRoom from "../rooms/game-room"
 import type GameState from "../rooms/states/game-state"
 import {
@@ -29,8 +32,9 @@ import {
   SynergyItems,
   Transfer
 } from "../types"
-import { DungeonPMDO } from "../types/enum/Dungeon"
+import { DungeonPMDO, DungeonInteger, DungeonByInteger } from "../types/enum/Dungeon"
 import { PokemonActionState } from "../types/enum/Game"
+import { PkmInteger, PkmByInteger } from "../types/enum/Pokemon"
 import {
   CraftableItemsNoScarves,
   CraftableNoStonesOrScarves,
@@ -41,10 +45,12 @@ import {
   SynergyGems,
   SynergyGivenByGem,
   SynergyStones,
-  Tools
+  Tools,
+  ItemInteger,
+  ItemByInteger,
 } from "../types/enum/Item"
 import { SpecialGameRule } from "../types/enum/SpecialGameRule"
-import { Synergy, SynergyArray } from "../types/enum/Synergy"
+import { Synergy, SynergyArray, SynergyInteger, SynergyByInteger } from "../types/enum/Synergy"
 import { type TownEncounter, TownEncounters } from "../types/enum/TownEncounter"
 import type { NpcDialog } from "../types/strings/NpcDialog"
 import { isIn } from "../utils/array"
@@ -55,8 +61,19 @@ import {
   pickNRandomIn,
   pickRandomIn,
   randomBetween,
-  randomWeighted,
-  shuffleArray
+  shuffleArray,
+  pcgRandomUint64,
+  PRNG_SUBOFFSET,
+  PRNG_N_ENCOUNTER_MAGNEZONE_OUTLAW_STAGE,
+  STR_PRNG_N_CAROUSEL_SYNERGY_STONE_PLACEHOLDER,
+  STR_PRNG_N_CAROUSEL_EXTRA_FOSSIL_STONE,
+  PRNG_N_PORTAL_SYMBOL_SEED,
+  PRNG_N_OFFSET_TOWN_ENCOUNTER,
+  PRNG_N_OFFSET_CAROUSEL_ITEM,
+  PRNG_N_OFFSET_CAROUSEL_MAP,
+  PRNG_P_CAROUSEL_POS,
+  PRNG_P_OFFSET_CAROUSEL_SYNERGY,
+  PRNG_P_OFFSET_BERRY_TREE,
 } from "../utils/random"
 import { schemaKeys, schemaValues } from "../utils/schemas"
 import { giveRandomEgg } from "./eggs"
@@ -70,6 +87,10 @@ const CAROUSEL_RADIUS_X = 150
 const CAROUSEL_RADIUS_Y = 125
 const AVATAR_RADIUS = 25
 const NB_SYMBOLS_PER_PLAYER = 4
+
+const WEIGHTS_FOR_EXTRA_FOSSIL_STONE: WeightMap = {}
+WEIGHTS_FOR_EXTRA_FOSSIL_STONE[PRNG_N_OFFSET_CAROUSEL_ITEM] = 0.6 // PRNG_N_OFFSET_CAROUSEL_ITEM + 0 means none
+WEIGHTS_FOR_EXTRA_FOSSIL_STONE[STR_PRNG_N_CAROUSEL_EXTRA_FOSSIL_STONE] = 0.4
 
 export class MiniGame {
   avatars: MapSchema<PokemonAvatarModel> | undefined
@@ -263,25 +284,31 @@ export class MiniGame {
   }
 
   initialize(state: GameState, room: GameRoom) {
-    const { players, stageLevel } = state
+    const { nonPlayerRngState, players, stageLevel } = state
     this.timeElapsed = 0
     this.rotationDirection = 1
 
     if (stageLevel in TownEncountersByStage) {
-      let encounter = randomWeighted(
-        TownEncountersByStage[stageLevel],
-        state.specialGameRule === SpecialGameRule.TOWN_FESTIVAL ? undefined : 1
-      ) as TownEncounter | null
-      if (
-        encounter != null &&
-        state.townEncounters.has(encounter) &&
-        state.specialGameRule !== SpecialGameRule.TOWN_FESTIVAL
-      ) {
-        encounter = null // prevent getting the same encounter twice in a game
+      const weights: WeightMap = {}
+      if (state.specialGameRule === SpecialGameRule.TOWN_FESTIVAL) {
+        for (const [pkmId, weight] of Object.entries(TownEncountersByStage[stageLevel])) {
+          weights[PkmInteger[pkmId] + PRNG_N_OFFSET_TOWN_ENCOUNTER] = weight
+        }
+      } else {
+        let weightTotal = 0.0
+        for (const [pkmId, weight] of Object.entries(TownEncountersByStage[stageLevel])) {
+          if (!state.townEncounters.has(pkmId as TownEncounter)) {
+            weights[PkmInteger[pkmId] + PRNG_N_OFFSET_TOWN_ENCOUNTER] = weight
+            weightTotal += weight
+          }
+        }
+        weights[PRNG_N_OFFSET_TOWN_ENCOUNTER] = 1.0 - weightTotal
       }
-      state.townEncounter = encounter ?? null
-      if (encounter) {
-        state.townEncounters.add(encounter)
+      const outcome = randomNeedle(nonPlayerRngState, weights)
+      if (outcome === null || outcome === PRNG_N_OFFSET_TOWN_ENCOUNTER.toString()) {
+        state.townEncounter = null
+      } else {
+        state.townEncounter = PkmByInteger[parseInt(outcome) - PRNG_N_OFFSET_TOWN_ENCOUNTER] as TownEncounter
         // add a fixed blocked circle collision body around encounter
         const body = Bodies.circle(this.centerX, this.centerY, 20, {
           isStatic: true,
@@ -297,11 +324,14 @@ export class MiniGame {
     }
 
     this.alivePlayers = new Array<Player>()
+    const carouselPos = new Map<string, number>()
     players.forEach((p) => {
       if (p.alive) {
         this.alivePlayers.push(p)
+        carouselPos.set(p.id, getOutput(createPcg32({}, p.rngState.seed, PRNG_P_CAROUSEL_POS)))
       }
     })
+    this.alivePlayers.sort((a, b) => carouselPos.get(a.id)! - carouselPos.get(b.id)!)
     this.alivePlayers.forEach((player, i) => {
       const x =
         this.centerX +
@@ -406,7 +436,7 @@ export class MiniGame {
         player.items.push(ticket)
       })
     } else if (state.townEncounter === TownEncounters.MAGNEZONE) {
-      state.outlawStage = randomBetween(5, 15)
+      state.outlawStage = randomInt(5, 16, stepState(stageLevel, createPcg32({}, nonPlayerRngState.seed, PRNG_N_ENCOUNTER_MAGNEZONE_OUTLAW_STAGE)))[0] // randomInt is [min, max)
       this.alivePlayers.forEach((player) => {
         player.items.push(Item.WANTED_NOTICE)
       })
@@ -512,6 +542,7 @@ export class MiniGame {
   }
 
   pickRandomItems(state: GameState): Item[] {
+    const nonPlayerRngState = state.nonPlayerRngState
     const stageLevel = state.stageLevel
     const encounter = state.townEncounter
     const items: Item[] = []
@@ -597,44 +628,127 @@ export class MiniGame {
     }
 
     if (encounter === TownEncounters.SABLEYE) {
-      items.push(...pickNRandomIn(SynergyGems, 4))
-    }
-
-    for (let j = 0; j < nbItemsToPick; j++) {
-      let item,
-        count,
-        tries = 0
-      do {
-        item = pickRandomIn(itemsSet)
-        count = items.filter((i) => i === item).length
-        tries++
-      } while (count >= maxCopiesPerItem && tries < 10)
-      items.push(item)
-    }
-
-    if (itemsSet === CraftableItemsNoScarves) {
-      while (items.filter((i) => isIn(SynergyStones, i)).length > 4) {
-        // ensure that there are at most 4 synergy stones in the carousel
-        const index = items.findIndex((i) => isIn(SynergyStones, i))
-        items[index] = pickRandomIn(CraftableNoStonesOrScarves)
+      const weights: WeightMap = {}
+      for (const item of SynergyGems) {
+        weights[ItemInteger[item] + PRNG_N_OFFSET_CAROUSEL_ITEM] = 1
       }
-    } else if (itemsSet === ItemComponentsNoFossilOrScarf && chance(0.4)) {
-      // max 1 random fossil stone, added with 40% chance
-      items.push(Item.FOSSIL_STONE)
+      const needleIds = randomNeedles(nonPlayerRngState, weights, 4, false)
+      for (const needleId of needleIds) {
+        items.push(ItemByInteger[parseInt(needleId) - PRNG_N_OFFSET_CAROUSEL_ITEM])
+      }
+    }
+
+    const outcomeIds = itemsSet.map(item => ItemInteger[item] + PRNG_N_OFFSET_CAROUSEL_ITEM)
+    const outcomeCounts: Record<string, number> = {}
+    let eligible = outcomeIds.length
+    let eligibleWeight = 1 / outcomeIds.length
+    let ineligibleWeight = 0
+    if (itemsSet !== CraftableItemsNoScarves) {
+      // normal case
+      if (itemsSet === ItemComponentsNoFossilOrScarf && randomNeedle(nonPlayerRngState, WEIGHTS_FOR_EXTRA_FOSSIL_STONE) === STR_PRNG_N_CAROUSEL_EXTRA_FOSSIL_STONE) {
+        items.push(Item.FOSSIL_STONE)
+      }
+      for (let i = 0; i < nbItemsToPick; i++) {
+        const weights = Object.fromEntries(outcomeIds.map(id =>
+          [id, outcomeCounts[id] && outcomeCounts[id] >= maxCopiesPerItem ? ineligibleWeight : eligibleWeight]))
+        const outcome = randomNeedle(nonPlayerRngState, weights)!
+        outcomeCounts[outcome] = (outcomeCounts[outcome] || 0) + 1
+        if (outcomeCounts[outcome] === maxCopiesPerItem) {
+          eligible -= 1
+          const ineligible = outcomeIds.length - eligible
+          ineligibleWeight = (ineligible / outcomeIds.length) ** 10
+          eligibleWeight = (1 - ineligibleWeight) / eligible // when eligible is 0, eligibleWeight is unused
+          ineligibleWeight /= ineligible
+        } // Xom: This replicates the probabilities resulting from the original logic that tries 10 times to pick an eligible item
+      }
+    } else {
+      // special case for itemsSet === CraftableItemsNoScarves
+      let synergyStones = 0
+      let ineligibleStones = 0
+      let i = 0
+      while (i < nbItemsToPick) {
+        const weights = Object.fromEntries(outcomeIds.map(id =>
+          [id, outcomeCounts[id] && outcomeCounts[id] >= maxCopiesPerItem ? ineligibleWeight : eligibleWeight]))
+        const outcome = randomNeedle(nonPlayerRngState, weights)!
+        outcomeCounts[outcome] = (outcomeCounts[outcome] || 0) + 1
+        i += 1
+        if (outcomeCounts[outcome] === maxCopiesPerItem) {
+          eligible -= 1
+          const ineligible = outcomeIds.length - eligible
+          ineligibleWeight = (ineligible / outcomeIds.length) ** 10
+          eligibleWeight = (1 - ineligibleWeight) / eligible // eligible won't be 0 because there's many stones
+          ineligibleWeight /= ineligible
+        }
+        if (isIn(SynergyStones, ItemByInteger[parseInt(outcome) - PRNG_N_OFFSET_CAROUSEL_ITEM])) {
+          synergyStones += 1
+          if (outcomeCounts[outcome] === maxCopiesPerItem) {
+            ineligibleStones += 1
+          }
+          if (synergyStones === 4) {
+            break
+          }
+        }
+      }
+      if (i < nbItemsToPick) {
+        // This doesn't perfectly replicate the original probabilities. That is, it doesn't replicate the tiny potential increase in the chance of picking an ineligible item due to picking more synergy stones that get rerolled later.
+        // Furthermore, I assume the placeholder represents an eligible stone, and for maxCopiesPerItem > 1, I ignore that possibility that it would become ineligible.
+        const nonStoneIds = CraftableNoStonesOrScarves.map(item => ItemInteger[item] + PRNG_N_OFFSET_CAROUSEL_ITEM)
+        let eligibleStones = outcomeIds.length - nonStoneIds.length - ineligibleStones
+        let placeholders = 0
+        do {
+          const weights = Object.fromEntries(nonStoneIds.map(id =>
+            [id, outcomeCounts[id] && outcomeCounts[id] >= maxCopiesPerItem ? ineligibleWeight : eligibleWeight]))
+          weights[STR_PRNG_N_CAROUSEL_SYNERGY_STONE_PLACEHOLDER] = eligibleStones * eligibleWeight + ineligibleStones * ineligibleWeight
+          const outcome = randomNeedle(nonPlayerRngState, weights)!
+          i += 1
+          if (outcome === STR_PRNG_N_CAROUSEL_SYNERGY_STONE_PLACEHOLDER) {
+            placeholders += 1
+            if (maxCopiesPerItem === 1) {
+              eligible -= 1
+              const ineligible = outcomeIds.length - eligible
+              ineligibleWeight = (ineligible / outcomeIds.length) ** 10
+              eligibleWeight = (1 - ineligibleWeight) / eligible
+              ineligibleWeight /= ineligible
+              eligibleStones -= 1
+              ineligibleStones += 1
+            }
+          } else {
+            outcomeCounts[outcome] = (outcomeCounts[outcome] || 0) + 1
+            if (outcomeCounts[outcome] === maxCopiesPerItem) {
+              eligible -= 1
+              const ineligible = outcomeIds.length - eligible
+              ineligibleWeight = (ineligible / outcomeIds.length) ** 10
+              eligibleWeight = (1 - ineligibleWeight) / eligible
+              ineligibleWeight /= ineligible
+            }
+          }
+        } while (i < nbItemsToPick)
+        if (placeholders) {
+          const outcomes = randomNeedles(nonPlayerRngState, Object.fromEntries(nonStoneIds.map(id => [id, 1])), placeholders)
+          for (const outcome of outcomes) {
+            outcomeCounts[outcome] = (outcomeCounts[outcome] || 0) + 1
+          }
+        }
+      }
+    }
+    for (const [id, count] of Object.entries(outcomeCounts)) {
+      const item = ItemByInteger[parseInt(id) - PRNG_N_OFFSET_CAROUSEL_ITEM]
+      for (let i = 0; i < count; i++) {
+        items.push(item)
+      }
     }
 
     return shuffleArray(items)
   }
 
   pickRandomSynergySymbols(stageLevel: number, room: GameRoom) {
+    const offset = stageLevel * PRNG_SUBOFFSET + PRNG_P_OFFSET_CAROUSEL_SYNERGY
     if (stageLevel === 0) {
-      const symbols = pickNRandomIn(
-        SynergyArray,
-        3 * ((this.avatars?.size ?? 8) + 1)
-      )
-      //logger.debug(`symbols chosen for player ${player.name}`, symbols)
-      symbols.forEach((type, i) => {
-        const symbol = new SynergySymbol(this.centerX, this.centerY, type, i)
+      //const n_offset = PRNG_N_OFFSET_CAROUSEL_SYNERGY // currently, offset happens to be the right value when stageLevel is 0
+      const weights = Object.fromEntries(Object.values(SynergyInteger).map(i => [i + offset, 1]))
+      const outcomes = randomNeedles(room.state.nonPlayerRngState, weights, 3 * ((this.avatars?.size ?? 8) + 1), false)
+      outcomes.forEach((needleId, i) => {
+        const symbol = new SynergySymbol(this.centerX, this.centerY, SynergyByInteger[parseInt(needleId) - offset], i)
         this.symbols?.set(symbol.id, symbol)
       })
     } else {
@@ -682,7 +796,7 @@ export class MiniGame {
         )*/
 
         let candidatesSymbols: Synergy[] = []
-        const MIN_SYMBOLS_POOL_SIZE = 4
+        const MIN_SYMBOLS_POOL_SIZE = NB_SYMBOLS_PER_PLAYER //4 // see 2026-7-5 comment below
         const MAX_SYMBOLS_POOL_SIZE = 7
         const MAX_SYMBOLS_OF_THE_SAME_TYPE = this.alivePlayers.length
         const getNbOfType = (type: Synergy) =>
@@ -694,6 +808,10 @@ export class MiniGame {
           candidatesSymbols.push(...new Array(level).fill(type))
         })
         //logger.debug("symbols from synergies", candidatesSymbols)
+
+        // 2026-7-5 Xom: I want to generate a maximum of NB_SYMBOLS_PER_PLAYER random needles;
+        // Before I made any changes, NB_SYMBOLS_PER_PLAYER and MIN_SYMBOLS_POOL_SIZE were both defined as 4;
+        // I will rely on them being equal, so I've changed the latter definition to MIN_SYMBOLS_POOL_SIZE = NB_SYMBOLS_PER_PLAYER.
         if (candidatesSymbols.length < MIN_SYMBOLS_POOL_SIZE) {
           // complete with random other incomplete synergies
           const incompleteSynergies = synergiesTriggerLevels
@@ -704,85 +822,163 @@ export class MiniGame {
                 getNbOfType(type) < MAX_SYMBOLS_OF_THE_SAME_TYPE
             )
             .map(([type, _level]) => type)
-          candidatesSymbols.push(
-            ...pickNRandomIn(
-              incompleteSynergies,
-              MIN_SYMBOLS_POOL_SIZE - candidatesSymbols.length
-            )
-          )
+          const weights: WeightMap = {}
+          for (const s of incompleteSynergies) {
+            const needleId = SynergyInteger[s] + offset
+            weights[needleId] = (weights[needleId] || 0) + 1
+          }
+          const outcomes = randomNeedles(player.rngState, weights, MIN_SYMBOLS_POOL_SIZE - candidatesSymbols.length, false)
+          for (const needleId of outcomes) {
+            candidatesSymbols.push(SynergyByInteger[parseInt(needleId) - offset])
+          }
           /*logger.debug(
             "completing symbols with incomplete synergies",
             incompleteSynergies
           )*/
+          if (candidatesSymbols.length < MIN_SYMBOLS_POOL_SIZE) {
+            // if still incomplete, complete with random
+            const weights = Object.fromEntries(synergiesUsable
+              .filter(type => getNbOfType(type) < MAX_SYMBOLS_OF_THE_SAME_TYPE)
+              .map(s => [SynergyInteger[s] + offset, 1]))
+            do {
+              const needleId = randomNeedle(player.rngState, weights)!
+              const s = SynergyByInteger[parseInt(needleId) - offset]
+              candidatesSymbols.push(s)
+              if (getNbOfType(s) === MAX_SYMBOLS_OF_THE_SAME_TYPE) {
+                delete weights[needleId]
+              }
+            } while (candidatesSymbols.length < MIN_SYMBOLS_POOL_SIZE)
+            /*logger.debug(
+              "completing symbols with random synergies",
+              candidatesSymbols
+            )*/
+          }
+          //logger.debug(`symbols chosen for player ${player.name}`, candidatesSymbols)
+          shuffleArray(candidatesSymbols).forEach((type, i) => {
+            const symbol = new SynergySymbol(avatar.x, avatar.y, type, i)
+            this.symbols?.set(symbol.id, symbol)
+          })
+        } else {
+          candidatesSymbols = candidatesSymbols.slice(0, MAX_SYMBOLS_POOL_SIZE)
+          //logger.debug("final candidates symbols", candidatesSymbols)
+          const weights: WeightMap = {}
+          for (const s of candidatesSymbols) {
+            const needleId = SynergyInteger[s] + offset
+            weights[needleId] = (weights[needleId] || 0) + 1
+          }
+          const outcomes = randomNeedles(player.rngState, weights, NB_SYMBOLS_PER_PLAYER, false) // Xom: Even if this picks all of them, it randomizes the order.
+          //logger.debug(`symbols chosen for player ${player.name}`, symbols)
+          outcomes.forEach((needleId, i) => {
+            const symbol = new SynergySymbol(avatar.x, avatar.y, SynergyByInteger[parseInt(needleId) - offset], i)
+            this.symbols?.set(symbol.id, symbol)
+          })
         }
-        while (candidatesSymbols.length < MIN_SYMBOLS_POOL_SIZE) {
-          // if still incomplete, complete with random
-          candidatesSymbols.push(
-            pickRandomIn(
-              synergiesUsable.filter(
-                (type) => getNbOfType(type) < MAX_SYMBOLS_OF_THE_SAME_TYPE
-              )
-            )
-          )
-          /*logger.debug(
-            "completing symbols with random synergies",
-            candidatesSymbols
-          )*/
-        }
-
-        candidatesSymbols = candidatesSymbols.slice(0, MAX_SYMBOLS_POOL_SIZE)
-        //logger.debug("final candidates symbols", candidatesSymbols)
-        const symbols = pickNRandomIn(candidatesSymbols, NB_SYMBOLS_PER_PLAYER)
-        //logger.debug(`symbols chosen for player ${player.name}`, symbols)
-        symbols.forEach((type, i) => {
-          const symbol = new SynergySymbol(avatar.x, avatar.y, type, i)
-          this.symbols?.set(symbol.id, symbol)
-        })
       })
     }
 
-    // randomly distribute symbols across portals
-    const portalIds = shuffleArray(schemaKeys(this.portals!))
-    const symbols = shuffleArray(schemaValues(this.symbols!))
-    this.symbolsByPortal = new Map()
+    const portalIds = schemaKeys(this.portals!)
+    const symbols = schemaValues(this.symbols!)
 
-    symbols.forEach((symbol, i) => {
-      const portalId = portalIds[i % portalIds.length]
-      this.symbolsByPortal.set(portalId, [
-        ...(this.symbolsByPortal.get(portalId) ?? []),
-        symbol
-      ])
-      room.clock.setTimeout(
-        () => {
-          symbol.index = Math.floor(i / portalIds.length)
-          symbol.portalId = portalId
-        },
-        1500 * (i / symbols.length)
-      )
-    })
+    // randomly distribute symbols across portals
+    const symbolDeck: Record<string, SynergySymbol[]> = {}
+    for (const symbol of symbols) {
+      const needleId = SynergyInteger[symbol.synergy] + offset
+      if (symbolDeck[needleId]) {
+        symbolDeck[needleId].push(symbol)
+      } else {
+        symbolDeck[needleId] = [symbol]
+      }
+    }
+    for (const needleId of Object.keys(symbolDeck)) {
+      if (symbolDeck[needleId].length > 1) {
+        shuffleArray(symbolDeck[needleId])
+      }
+    }
+    const n = portalIds.length
+    let remaining = symbols.length
+    const buckets: SynergySymbol[][] = portalIds.map(x => []);
+    const bucketSpace = portalIds.map((x, i) => Math.floor(remaining / n) + (i < (remaining % n) ? 1 : 0))
+    const haystacks: Haystack[] = []
+    let seedGenerator = createPcg32({}, room.state.nonPlayerRngState.seed, PRNG_N_PORTAL_SYMBOL_SEED) // PRNG_N_PORTAL_SYMBOL_SEED can be reused because offset varies by stageLevel
+    for (let i = 0; i < n; i++) {
+      const [seed, nextState] = pcgRandomUint64(seedGenerator)
+      haystacks.push(createHaystack(seed))
+      seedGenerator = nextState
+    }
+    while (remaining > 0) {
+      const symbolDeckEntries = Object.entries(symbolDeck)
+      const [haystackStr, needleId] = randomNeedleFromHaystacks(Object.fromEntries(haystacks.flatMap((haystack, i) =>
+        bucketSpace[i] === 0 ? [] : [
+          [i, {
+            haystack,
+            weights: Object.fromEntries(symbolDeckEntries.map(([needleId, a]) => [needleId, a.length * bucketSpace[i]])),
+          }]
+        ])))!
+      const index = parseInt(haystackStr)
+      buckets[index].push(symbolDeck[needleId].pop()!)
+      if (symbolDeck[needleId].length === 0) {
+        delete symbolDeck[needleId]
+      }
+      bucketSpace[index] -= 1
+      remaining -= 1
+    }
+
+    shuffleArray(portalIds)
+    this.symbolsByPortal = new Map()
+    for (let i = 0; i < n; i++) {
+      const portalId = portalIds[i]
+      const bucket = buckets[i]
+      this.symbolsByPortal.set(portalId, bucket)
+      bucket.forEach((symbol, j) => {
+        room.clock.setTimeout(
+          () => {
+            symbol.index = j
+            symbol.portalId = portalId
+          },
+          1500 * ((j * n + i) / symbols.length)
+        )
+      })
+    }
 
     // assign a map to each portal
+    const mapOffset = stageLevel * PRNG_SUBOFFSET + PRNG_N_OFFSET_CAROUSEL_MAP
     const maps = new Set(Object.values(DungeonPMDO))
-    this.portals?.forEach((portal) => {
-      const symbols = this.symbolsByPortal.get(portal.id)
-      const portalSynergies = (symbols ?? []).map((s) => s.synergy)
-      let nbMaxInCommon = 0,
-        candidateMaps: DungeonPMDO[] = []
-      maps.forEach((map) => {
-        const synergies = RegionDetails[map].synergies
-        const inCommon = synergies.filter((s) => portalSynergies.includes(s))
-
-        if (inCommon.length > nbMaxInCommon) {
-          nbMaxInCommon = inCommon.length
-          candidateMaps = [map]
-        } else if (inCommon.length === nbMaxInCommon) {
-          candidateMaps.push(map)
+    for (let i = 0; i < n; i++) {
+      bucketSpace[i] = 1
+    }
+    for (let i = 0; i < n; i++) {
+      const haystackMap: Record<string, { haystack: Haystack; weights: WeightMap }> = {}
+      for (let j = 0; j < n; j++) {
+        if (bucketSpace[j] === 0) {
+          continue
         }
-      })
-
-      portal.map = pickRandomIn(candidateMaps)
-      maps.delete(portal.map) // a map can't be taken twice
-    })
+        const portalSynergies = buckets[j].map(s => s.synergy)
+        let nbMaxInCommon = 0
+        let candidateMaps: DungeonPMDO[] = []
+        maps.forEach(map => {
+          const synergies = RegionDetails[map].synergies
+          const inCommon = synergies.filter(s => portalSynergies.includes(s))
+          if (inCommon.length > nbMaxInCommon) {
+            nbMaxInCommon = inCommon.length
+            candidateMaps = [map]
+          } else if (inCommon.length === nbMaxInCommon) {
+            candidateMaps.push(map)
+          }
+        })
+        const weight = 1 / candidateMaps.length
+        haystackMap[j] = {
+          haystack: haystacks[j],
+          weights: Object.fromEntries(candidateMaps.map(map => [DungeonInteger[map] + mapOffset, weight])),
+        }
+      }
+      const [haystackStr, needleId] = randomNeedleFromHaystacks(haystackMap)!
+      const index = parseInt(haystackStr)
+      const map = DungeonByInteger[parseInt(needleId) - mapOffset]
+      this.portals!.get(portalIds[index])!.map = map
+      maps.delete(map) // a map can't be taken twice
+      bucketSpace[index] = 0
+      // console.log(map, buckets[index].map(s => s.synergy))
+    }
   }
 
   applyVector(id: string, x: number, y: number) {
@@ -897,7 +1093,9 @@ export class MiniGame {
             player.map = portal.map
             player.regions.push(portal.map)
             player.updateRegionalPool(state, true, previousMap)
-            const newBerryTreeTypes = pickNRandomIn(NonSpecialBerries, 3)
+            const newBerryTreeTypes = randomNeedles(player.rngState, Object.fromEntries(
+              NonSpecialBerries.map(item => [ItemInteger[item] + PRNG_P_OFFSET_BERRY_TREE, 1])
+            ), 3, false).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_BERRY_TREE])
             for (let i = 0; i < player.berryTreesType.length; i++) {
               player.berryTreesType[i] = newBerryTreeTypes[i]
               player.berryTreesStages[i] = 0

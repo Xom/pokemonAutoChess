@@ -33,3 +33,11 @@ export enum Synergy {
 }
 
 export const SynergyArray = Object.values(Synergy)
+
+export const SynergyInteger: { [key in Synergy]: number } = Object.fromEntries(
+  Object.values(Synergy).map((s, i) => [s, i + 1]) // reserve 0 to mean none
+) as { [key in Synergy]: number };
+
+export const SynergyByInteger: { [index: string]: Synergy } = Object.fromEntries(
+  Object.entries(SynergyInteger).map(([s, indexInteger]) => [indexInteger.toString(), s as Synergy])
+)

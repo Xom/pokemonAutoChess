@@ -228,8 +228,8 @@ export function pickChoice(choiceId: string, choiceIndex: number) {
   rooms.game?.send(Transfer.CHOICE, { choiceId, choiceIndex })
 }
 
-export function gameStartRequest(token: string) {
-  rooms.preparation?.send(Transfer.GAME_START_REQUEST, { token })
+export function gameStartRequest(token: string, seeds: Record<string, string> | null = null) {
+  rooms.preparation?.send(Transfer.GAME_START_REQUEST, { token, seeds })
 }
 
 export function changeRoomName(name: string) {

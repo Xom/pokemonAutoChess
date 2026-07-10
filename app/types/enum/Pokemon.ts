@@ -3800,3 +3800,75 @@ export const NON_PMD_PKM_INDEXES: string[] = [
   "0534-0002", // Pillar Concrete,
   "0025-9999" // Pikachu Surfer
 ]
+
+// Xom: As of 2026 June, the third section is always 0000, so I ignore it, which leaves more breathing room under the integer limit.
+function pkmIndexToInteger(id: string): number {
+  const match = id.match(
+    /^(\d{4})(?:-(\d{4})(?:-0000(?:-(\d{4}))?)?)?$/
+  );
+
+  if (!match) {
+    throw new Error("Invalid ID");
+  }
+
+  const [, a, b, c] = match;
+
+  if (b === undefined) {
+    // dddd
+    return parseInt(a) * 1_0000_0000 + 1_0000_0000_0000;
+  }
+
+  if (c === undefined) {
+    // dddd-dddd or dddd-dddd-0000
+    return parseInt(a + b) * 1_0000 + 1_0000_0000_0000;
+  }
+
+  // dddd-dddd-0000-dddd
+  return parseInt(a + b + c) + 1_0000_0000_0000;
+}
+
+export const PkmInteger: { [key in Pkm]: number } = Object.fromEntries(
+  Object.entries(PkmIndex).map(([pkm, index]) => [pkm, pkmIndexToInteger(index)])
+) as { [key in Pkm]: number }
+
+export const PkmByInteger: { [index: string]: Pkm } = Object.fromEntries(
+  Object.entries(PkmInteger).map(([pkm, indexInteger]) => [indexInteger.toString(), pkm as Pkm])
+)
+
+export function pkmPropositionInteger(p: PkmProposition) {
+  switch (p) {
+    case PkmDuo.LATIOS_LATIAS:
+      return 3810380
+    case PkmDuo.PLUSLE_MINUN:
+      return 3110312
+    case PkmDuo.ILLUMISE_VOLBEAT:
+      return 3140313
+    case PkmDuo.NINJASK_SHEDINJA:
+      return 2910292
+    case PkmDuo.INDEEDEE:
+      return 8760876
+    case PkmDuo.BASCULIN_RED_BLUE:
+      return 5500550
+    default:
+      return PkmInteger[p]
+  }
+}
+
+export function pkmPropositionByInteger(id: number): PkmProposition {
+  switch (id) {
+    case 3810380:
+      return PkmDuo.LATIOS_LATIAS
+    case 3110312:
+      return PkmDuo.PLUSLE_MINUN
+    case 3140313:
+      return PkmDuo.ILLUMISE_VOLBEAT
+    case 2910292:
+      return PkmDuo.NINJASK_SHEDINJA
+    case 8760876:
+      return PkmDuo.INDEEDEE
+    case 5500550:
+      return PkmDuo.BASCULIN_RED_BLUE
+    default:
+      return PkmByInteger[id]
+  }
+}

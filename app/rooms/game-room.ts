@@ -2,6 +2,9 @@ import { Dispatcher } from "@colyseus/command"
 import type { MapSchema } from "@colyseus/schema"
 import { type Client, CloseCode, Room } from "colyseus"
 import admin from "firebase-admin"
+import { createPcg32 } from "pcg"
+import { createHaystack } from "shuffle-duplication"
+import type { Haystack } from "shuffle-duplication"
 import {
   ALLOWED_GAME_RECONNECTION_TIME,
   ExpPlace,
@@ -87,7 +90,7 @@ import { isValidDate } from "../utils/date"
 import { formatMinMaxRanks, getRank } from "../utils/elo"
 import { logger } from "../utils/logger"
 import { clamp } from "../utils/number"
-import { shuffleArray } from "../utils/random"
+import { shuffleArray, randomUint64, pcgRandomUint64, PRNG_N_DEFAULT_PLAYER_SEED } from "../utils/random"
 import { schemaValues } from "../utils/schemas"
 import {
   OnBuyPokemonCommand,
@@ -136,7 +139,8 @@ export default class GameRoom extends Room<{ state: GameState }> {
     minRank,
     maxRank,
     tournamentId,
-    bracketId
+    bracketId,
+    seeds,
   }: {
     users: Record<string, IGameUser>
     preparationId: string
@@ -149,6 +153,7 @@ export default class GameRoom extends Room<{ state: GameState }> {
     maxRank: EloRank | null
     tournamentId: string | null
     bracketId: string | null
+    seeds: Record<string, string>
   }) {
     logger.info("Create Game ", this.roomId)
 
@@ -178,7 +183,34 @@ export default class GameRoom extends Room<{ state: GameState }> {
       tournamentId,
       bracketId
     })
-    // logger.debug(options);
+
+    const nonPlayerRngState = createHaystack(seeds['-1'] || randomUint64())
+    const playerRngStates: Record<string, Haystack> = {}
+    const defaultSeedees: string[] = []
+    const customSeeds = new Set<string>();
+    for (const uid of Object.keys(users)) {
+      if (seeds[uid]) {
+        playerRngStates[uid] = createHaystack(seeds[uid])
+        customSeeds.add(seeds[uid])
+      } else {
+        defaultSeedees.push(uid)
+      }
+    }
+    if (defaultSeedees.length) {
+      shuffleArray(defaultSeedees)
+      let seedGenerator = createPcg32({}, nonPlayerRngState.seed, PRNG_N_DEFAULT_PLAYER_SEED)
+      while (true) {
+        const [seed, nextState] = pcgRandomUint64(seedGenerator)
+        if (!customSeeds.has(seed.toString())) {
+          playerRngStates[defaultSeedees.pop()!] = createHaystack(seed)
+          if (!defaultSeedees.length) {
+            break;
+          }
+        }
+        seedGenerator = nextState
+      }
+    }
+
     this.state = new GameState(
       preparationId,
       name,
@@ -186,7 +218,8 @@ export default class GameRoom extends Room<{ state: GameState }> {
       gameMode,
       minRank,
       maxRank,
-      specialGameRule
+      specialGameRule,
+      nonPlayerRngState,
     )
     this.miniGame.create(
       this.state.avatars,
@@ -265,7 +298,7 @@ export default class GameRoom extends Room<{ state: GameState }> {
     }
 
     await Promise.all(
-      Object.keys(users).map(async (id) => {
+      shuffleArray(Object.keys(users)).map(async (id) => {
         const user = users[id]
         //logger.debug(`init player`, user)
         if (user.isBot) {
@@ -280,6 +313,7 @@ export default class GameRoom extends Room<{ state: GameState }> {
             new Map<string, IPokemonCollectionItemMongo>(),
             "",
             Role.BOT,
+            playerRngStates[user.uid],
             this.state
           )
           this.state.players.set(user.uid, player)
@@ -300,6 +334,7 @@ export default class GameRoom extends Room<{ state: GameState }> {
               user.pokemonCollection,
               user.title,
               user.role,
+              playerRngStates[user.uid],
               this.state
             )
 

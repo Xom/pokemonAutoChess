@@ -1,3 +1,6 @@
+import { createPcg32 } from "pcg"
+import { randomNeedle, randomNeedles } from "shuffle-duplication"
+import type { WeightMap } from "shuffle-duplication"
 import {
   AQUA_MONICA_CHANCE,
   ARCEUS_RATE,
@@ -48,7 +51,9 @@ import { Rarity } from "../types/enum/Game"
 import {
   type FishingRod,
   Item,
-  ItemComponentsNoFossilOrScarf
+  ItemComponentsNoFossilOrScarf,
+  ItemInteger,
+  ItemByInteger,
 } from "../types/enum/Item"
 import {
   isRegionalVariant,
@@ -57,19 +62,36 @@ import {
   PkmFamily,
   type PkmProposition,
   PkmRegionalVariants,
-  Unowns
+  Unowns,
+  PkmInteger,
+  PkmByInteger,
+  pkmPropositionInteger,
+  pkmPropositionByInteger,
 } from "../types/enum/Pokemon"
 import { SpecialGameRule } from "../types/enum/SpecialGameRule"
-import { Synergy } from "../types/enum/Synergy"
+import { Synergy, SynergyInteger, SynergyByInteger } from "../types/enum/Synergy"
 import { removeInArray } from "../utils/array"
 import { logger } from "../utils/logger"
 import { clamp, min } from "../utils/number"
 import {
   chance,
-  pickNRandomIn,
   pickRandomIn,
-  randomWeighted,
-  shuffleArray
+  shuffleArray,
+  pcgRandomFloat,
+  pcgRandomWeighted,
+  PRNG_SUBOFFSET,
+  PRNG_P_STARTER_EEVEE,
+  PRNG_P_OFFSET_UNIQUE_PROPOSITION_KECLEON,
+  PRNG_P_OFFSET_UNIQUE_PROPOSITION_ARCEUS,
+  PRNG_P_OFFSET_SHOP_RARITY,
+  PRNG_P_OFFSET_DITTO,
+  PRNG_P_OFFSET_FALINKS,
+  PRNG_P_OFFSET_FISH_RARITY,
+  PRNG_P_OFFSET_MAGNET_PULL_RARITY,
+  PRNG_P_OFFSET_ITEM_PICK,
+  PRNG_P_OFFSET_UNIQUE_PROPOSITION_SYNERGIES,
+  PRNG_P_OFFSET_UNIQUE_PROPOSITION,
+  PRNG_P_OFFSET_UNIQUE_PROPOSITION_VARIANT,
 } from "../utils/random"
 import { schemaValues } from "../utils/schemas"
 import type Player from "./colyseus-models/player"
@@ -316,7 +338,7 @@ export default class Shop {
     // No need to release pokemons since they won't be changed
     player.shop.forEach((pokemon, i) => {
       if (pokemon === Pkm.MAGIKARP || pokemon === Pkm.DEFAULT) {
-        player.shop[i] = this.pickPokemon(player, state, i)
+        player.shop[i] = this.pickPokemon(player, state, 0, i)
       }
     })
   }
@@ -347,17 +369,16 @@ export default class Shop {
       player.shopFreeRolls += 1
       player.shopsSinceLastUnownShop = 0
       const unowns = getUnownsPoolPerStage(state.stageLevel)
-      const chosenUnowns: Pkm[] = []
+      const chosenUnowns = randomNeedles(player.rngState, Object.fromEntries(
+        unowns.map(pkm => [PkmInteger[pkm], 1])
+      ), SHOP_SIZE, false).map(needleId => PkmByInteger[needleId])
       for (let i = 0; i < SHOP_SIZE; i++) {
-        const availableUnowns = unowns.filter((u) => !chosenUnowns.includes(u))
-        const randomUnown = pickRandomIn(availableUnowns)
-        chosenUnowns.push(randomUnown)
-        player.shop[i] = randomUnown
+        player.shop[i] = chosenUnowns[i]
       }
     } else {
       // Regular shop
       for (let i = 0; i < SHOP_SIZE; i++) {
-        player.shop[i] = this.pickPokemon(player, state, i)
+        player.shop[i] = this.pickPokemon(player, state, 0, i)
       }
     }
   }
@@ -395,7 +416,14 @@ export default class Shop {
 
     // ensure we have at least one synergy per proposition
     if (portalSynergies.length > NB_UNIQUE_PROPOSITIONS) {
-      portalSynergies = pickNRandomIn(portalSynergies, NB_UNIQUE_PROPOSITIONS)
+      const offset = stageLevel * PRNG_SUBOFFSET + PRNG_P_OFFSET_UNIQUE_PROPOSITION_SYNERGIES
+      const weights: WeightMap = {}
+      for (const s of portalSynergies) {
+        const needleId = SynergyInteger[s] + offset
+        weights[needleId] = (weights[needleId] || 0) + 1
+      }
+      portalSynergies = randomNeedles(player.rngState, weights, NB_UNIQUE_PROPOSITIONS, false)
+        .map(needleId => SynergyByInteger[parseInt(needleId) - offset])
     }
 
     const nbPropositions =
@@ -457,52 +485,64 @@ export default class Shop {
 
       let candidates = allCandidates.filter(filterCandidates)
       const initialCandidatesEmpty = candidates.length === 0
-      if (initialCandidatesEmpty) {
-        synergyWanted = undefined
-        candidates = allCandidates.filter(filterCandidates)
-      }
-      let selected = pickRandomIn(candidates)
 
-      if (selected in PkmRegionalVariants) {
-        const regionalVariants = PkmRegionalVariants[selected]!.filter((p) =>
-          new PokemonClasses[p](p).isInRegion(player.map)
-        )
-        if (regionalVariants.length > 0)
-          selected = pickRandomIn(regionalVariants)
-      }
-      if (selected in PkmAltFormsByPkm) {
-        selected = getAltFormForPlayer(selected as Pkm, player)
-      }
-
-      if (stageLevel === PortalCarouselStages[0]) {
-        itemsProposed[i] = pickRandomIn(
-          ItemComponentsNoFossilOrScarf.filter(
-            (c) => itemsProposed.includes(c) === false
-          )
-        )
-      }
-
+      let selected: PkmProposition = Pkm.EEVEE // will be overwritten except in eevee chance branch
       if (
         stageLevel === PortalCarouselStages[0] &&
         pokemonsProposed.includes(Pkm.EEVEE) === false &&
-        (chance(EEVEE_RATE) || initialCandidatesEmpty) &&
         state.specialGameRule !== SpecialGameRule.FIRST_PARTNER &&
-        state.specialGameRule !== SpecialGameRule.UNIQUE_STARTER
+        state.specialGameRule !== SpecialGameRule.UNIQUE_STARTER &&
+        (initialCandidatesEmpty || pcgRandomFloat(createPcg32({}, player.rngState.seed, PRNG_P_STARTER_EEVEE))[0] < EEVEE_RATE)
       ) {
-        selected = Pkm.EEVEE
+        // selected = Pkm.EEVEE
         itemsProposed[i] = Item.FOSSIL_STONE
       } else if (
         stageLevel === PortalCarouselStages[1] &&
         pokemonsProposed.includes(Pkm.KECLEON) === false &&
-        chance(KECLEON_RATE)
+        pcgRandomFloat(createPcg32({}, player.rngState.seed, PRNG_P_OFFSET_UNIQUE_PROPOSITION_KECLEON))[0] < KECLEON_RATE
       ) {
         selected = Pkm.KECLEON
       } else if (
         stageLevel === PortalCarouselStages[2] &&
         pokemonsProposed.includes(Pkm.ARCEUS) === false &&
-        chance(ARCEUS_RATE)
+        pcgRandomFloat(createPcg32({}, player.rngState.seed, PRNG_P_OFFSET_UNIQUE_PROPOSITION_ARCEUS))[0] < ARCEUS_RATE
       ) {
         selected = Pkm.ARCEUS
+      } else {
+        if (initialCandidatesEmpty) {
+          synergyWanted = undefined
+          candidates = allCandidates.filter(filterCandidates)
+        }
+        selected = pkmPropositionByInteger(parseInt(
+          randomNeedle(player.rngState, Object.fromEntries(
+            candidates.map(p => [pkmPropositionInteger(p) + PRNG_P_OFFSET_UNIQUE_PROPOSITION, 1])
+          ))!
+        ) - PRNG_P_OFFSET_UNIQUE_PROPOSITION)
+
+        if (selected in PkmRegionalVariants) {
+          const regionalVariants = PkmRegionalVariants[selected]!.filter((p) =>
+            new PokemonClasses[p](p).isInRegion(player.map)
+          )
+          if (regionalVariants.length > 0) {
+            selected = PkmByInteger[parseInt(
+              randomNeedle(player.rngState, Object.fromEntries(
+                regionalVariants.map(pkm => [PkmInteger[pkm] + PRNG_P_OFFSET_UNIQUE_PROPOSITION_VARIANT, 1])
+              ))!
+            ) - PRNG_P_OFFSET_UNIQUE_PROPOSITION_VARIANT]
+          }
+        }
+        if (selected in PkmAltFormsByPkm) {
+          selected = getAltFormForPlayer(selected as Pkm, player)
+        }
+
+        if (stageLevel === PortalCarouselStages[0]) {
+          itemsProposed[i] = ItemByInteger[parseInt(
+            randomNeedle(player.rngState, Object.fromEntries(
+              ItemComponentsNoFossilOrScarf.filter(item => !itemsProposed.includes(item))
+                .map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1])
+            ))!
+          ) - PRNG_P_OFFSET_ITEM_PICK]
+        }
       }
 
       removeInArray(allCandidates, selected)
@@ -521,8 +561,9 @@ export default class Shop {
   getRandomPokemonFromPool(
     rarity: Rarity,
     player: Player,
+    offset: number = 0,
     finals: Set<Pkm> = new Set(),
-    specificTypesWanted?: Synergy[]
+    specificTypesWanted?: Synergy[],
   ): Pkm {
     let pkm = Pkm.MAGIKARP
     const candidates = (this.getPool(rarity) ?? [])
@@ -556,14 +597,19 @@ export default class Shop {
       })
 
     if (candidates.length > 0) {
-      pkm = pickRandomIn(candidates)
+      const weights: WeightMap = {}
+      for (const pkm of candidates) {
+        const needleId = PkmInteger[pkm] + offset
+        weights[needleId] = (weights[needleId] || 0) + 1
+      }
+      pkm = PkmByInteger[parseInt(randomNeedle(player.rngState, weights)!) - offset]
     } else if (
       specificTypesWanted &&
       specificTypesWanted.includes(Synergy.WATER)
     ) {
       return Pkm.MAGIKARP // if no more water in pool, return magikarp
     } else if (specificTypesWanted) {
-      return this.getRandomPokemonFromPool(rarity, player, finals) // could not find of specific type, return another type
+      return this.getRandomPokemonFromPool(rarity, player, offset, finals) // could not find of specific type, return another type
     }
 
     const { regional } = getPokemonData(pkm)
@@ -583,16 +629,21 @@ export default class Shop {
   pickPokemon(
     player: Player,
     state: GameState,
+    offset: number = 0,
     shopIndex: number = -1,
     noSpecial = false
   ): Pkm {
     if (
       state.specialGameRule !== SpecialGameRule.DITTO_PARTY &&
-      chance(DITTO_RATE) &&
       state.stageLevel >= MIN_STAGE_FOR_DITTO &&
       !noSpecial
     ) {
-      return player.items.includes(Item.MYSTERY_BOX) ? Pkm.MELTAN : Pkm.DITTO
+      const pcgState = player.rngState.needles[PRNG_P_OFFSET_DITTO]?.[1] ?? createPcg32({}, player.rngState.seed, PRNG_P_OFFSET_DITTO)
+      const r = pcgRandomFloat(pcgState)
+      player.rngState.needles[PRNG_P_OFFSET_DITTO] = r
+      if (r[0] < DITTO_RATE) {
+        return player.items.includes(Item.MYSTERY_BOX) ? Pkm.MELTAN : Pkm.DITTO
+      }
     }
 
     if (shopIndex === 5 && !noSpecial) {
@@ -604,15 +655,21 @@ export default class Shop {
           totalRerolls % UNOWN_PSY5_NB_SHOPS_INTERVAL === 0)
       ) {
         const unowns = getUnownsPoolPerStage(state.stageLevel)
-        return pickRandomIn(unowns)
+        return PkmByInteger[parseInt(
+          randomNeedle(player.rngState, Object.fromEntries(
+            unowns.map(pkm => [PkmInteger[pkm] + offset, 1])
+          ))!
+        ) - offset]
       }
     }
 
-    if (
-      player.effects.has(EffectEnum.FALINKS_BRASS) &&
-      chance(FALINKS_TROOPER_RATE)
-    ) {
-      return Pkm.FALINKS_TROOPER
+    if (player.effects.has(EffectEnum.FALINKS_BRASS)) {
+      const pcgState = player.rngState.needles[PRNG_P_OFFSET_FALINKS]?.[1] ?? createPcg32({}, player.rngState.seed, PRNG_P_OFFSET_FALINKS)
+      const r = pcgRandomFloat(pcgState)
+      player.rngState.needles[PRNG_P_OFFSET_FALINKS] = r
+      if (r[0] < FALINKS_TROOPER_RATE) {
+        return Pkm.FALINKS_TROOPER
+      }
     }
 
     const wildChance = getWildChance(player, state.stageLevel)
@@ -669,8 +726,11 @@ export default class Shop {
       specificTypesWanted = [Synergy.GROUND]
     }
 
+    const rarityPcgState = player.rngState.needles[PRNG_P_OFFSET_SHOP_RARITY]?.[1] ?? createPcg32({}, player.rngState.seed, PRNG_P_OFFSET_SHOP_RARITY)
+    const rarityPcgResult = pcgRandomFloat(rarityPcgState)
+    player.rngState.needles[PRNG_P_OFFSET_SHOP_RARITY] = rarityPcgResult
+    const rarity_seed = rarityPcgResult[0]
     const probas = RarityProbabilityPerLevel[player.experienceManager.level]
-    const rarity_seed = Math.random()
     let i = 0,
       threshold = 0
     while (rarity_seed > threshold) {
@@ -690,9 +750,9 @@ export default class Shop {
       chance(HIGH_ROLLER_CHANCE) &&
       !noSpecial
     ) {
-      if (state.stageLevel < 10) return this.pickSpecialPokemon(Rarity.HATCH)
-      if (state.stageLevel < 20) return this.pickSpecialPokemon(Rarity.UNIQUE)
-      return this.pickSpecialPokemon(Rarity.LEGENDARY)
+      if (state.stageLevel < 10) return this.pickSpecialPokemon(player, Rarity.HATCH, offset)
+      if (state.stageLevel < 20) return this.pickSpecialPokemon(player, Rarity.UNIQUE, offset)
+      return this.pickSpecialPokemon(player, Rarity.LEGENDARY, offset)
     }
 
     if (!rarity) {
@@ -717,24 +777,25 @@ export default class Shop {
         totalRerolls >= REPEAT_BALL_LEGENDARY_CAP &&
         totalRerolls % REPEAT_BALL_UNIQUE_INTERVAL === 0
       ) {
-        return this.pickSpecialPokemon(Rarity.LEGENDARY)
+        return this.pickSpecialPokemon(player, Rarity.LEGENDARY, offset)
       } else if (
         totalRerolls >= REPEAT_BALL_UNIQUE_CAP &&
         totalRerolls % REPEAT_BALL_UNIQUE_INTERVAL === 0
       ) {
-        return this.pickSpecialPokemon(Rarity.UNIQUE)
+        return this.pickSpecialPokemon(player, Rarity.UNIQUE, offset)
       }
     }
 
     return this.getRandomPokemonFromPool(
       rarity,
       player,
+      offset,
       finals,
       specificTypesWanted
     )
   }
 
-  pickSpecialPokemon(rarity: Rarity) {
+  pickSpecialPokemon(player: Player, rarity: Rarity, offset: number = 0) {
     let pool: PkmProposition[]
     switch (rarity) {
       case Rarity.LEGENDARY:
@@ -757,7 +818,13 @@ export default class Shop {
       (p, index) =>
         candidates.findIndex((p2) => PkmFamily[p2] === PkmFamily[p]) === index
     )
-    if (candidates.length > 0) return pickRandomIn(candidates)
+    if (candidates.length > 0) {
+      return PkmByInteger[parseInt(
+        randomNeedle(player.rngState, Object.fromEntries(
+          candidates.map(pkm => [PkmInteger[pkm] + offset, 1])
+        ))!
+      ) - offset]
+    }
     return Pkm.MAGIKARP
   }
 
@@ -765,10 +832,6 @@ export default class Shop {
     const mantine = schemaValues(player.board).find(
       (p) => p.name === Pkm.MANTYKE || p.name === Pkm.MANTINE
     )
-
-    const rarityProbability = FishRarityProbability[rod]
-    const rarity_seed = Math.random()
-    let threshold = 0
     const finals = player.getFinalizedLines()
     const wildChance = getWildChance(player, state.stageLevel)
 
@@ -778,6 +841,13 @@ export default class Shop {
     )
       return Pkm.REMORAID
 
+    const rarityPcgState = player.rngState.needles[PRNG_P_OFFSET_FISH_RARITY]?.[1] ?? createPcg32({}, player.rngState.seed, PRNG_P_OFFSET_FISH_RARITY)
+    const rarityPcgResult = pcgRandomFloat(rarityPcgState)
+    player.rngState.needles[PRNG_P_OFFSET_FISH_RARITY] = rarityPcgResult
+    const rarity_seed = rarityPcgResult[0]
+
+    const rarityProbability = FishRarityProbability[rod]
+    let threshold = 0
     let rarity = Rarity.SPECIAL
     for (const r in rarityProbability) {
       threshold += rarityProbability[r]
@@ -788,9 +858,7 @@ export default class Shop {
     }
 
     if (rarity !== Rarity.SPECIAL) {
-      const fish = this.getRandomPokemonFromPool(rarity, player, finals, [
-        Synergy.WATER
-      ])
+      const fish = this.getRandomPokemonFromPool(rarity, player, 0, finals, [Synergy.WATER])
       if (fish !== Pkm.MAGIKARP) return fish
     }
 
@@ -812,20 +880,22 @@ export default class Shop {
       [Rarity.ULTRA]: rarityProbabilies[4],
       [Rarity.SPECIAL]: 0.35
     }
-    const rarity =
-      randomWeighted(
-        magnetPullRatePerRarity,
-        1.35,
-        meltan.ap,
-        0.5,
-        meltan.luck
-      ) ?? Rarity.SPECIAL
+
+    const pcgState = player.rngState.needles[PRNG_P_OFFSET_MAGNET_PULL_RARITY]?.[1] ?? createPcg32({}, player.rngState.seed, PRNG_P_OFFSET_MAGNET_PULL_RARITY)
+    const r = pcgRandomWeighted(
+      pcgState,
+      magnetPullRatePerRarity,
+      1.35,
+      meltan.ap,
+      0.5,
+      meltan.luck
+    )
+    player.rngState.needles[PRNG_P_OFFSET_MAGNET_PULL_RARITY] = [0, r[1]]
+    const rarity = r[0] ?? Rarity.SPECIAL
 
     if (rarity !== Rarity.SPECIAL) {
-      const steelPkm = this.getRandomPokemonFromPool(rarity, player, finals, [
-        Synergy.STEEL
-      ])
-      if (getPokemonData(steelPkm).types.includes(Synergy.STEEL))
+      const steelPkm = this.getRandomPokemonFromPool(rarity, player, 0, finals, [Synergy.STEEL])
+      if (getPokemonData(steelPkm).types.includes(Synergy.STEEL)) // 2026-7-9 Xom: Ideally, we would be able to call and request no fallback, instead of consuming a seeded rng call to generate the fallback
         return steelPkm
     }
 

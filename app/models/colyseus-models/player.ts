@@ -1,4 +1,6 @@
 import { ArraySchema, MapSchema, Schema, type, view } from "@colyseus/schema"
+import type { Haystack, WeightMap } from "shuffle-duplication"
+import { randomNeedle, randomNeedles } from "shuffle-duplication"
 import {
   AdditionalPicksStages,
   BOARD_HEIGHT,
@@ -18,6 +20,8 @@ import type GameState from "../../rooms/states/game-state"
 import {
   type FlowerPot,
   FlowerPots,
+  FlowerPotInteger,
+  FlowerPotByInteger,
   type IPlayer,
   type Role,
   Title
@@ -46,7 +50,9 @@ import {
   TMsSilver,
   ToolsBuried,
   Wands,
-  WeatherRocks
+  WeatherRocks,
+  ItemInteger,
+  ItemByInteger,
 } from "../../types/enum/Item"
 import { Passive } from "../../types/enum/Passive"
 import {
@@ -76,9 +82,11 @@ import {
 import { min } from "../../utils/number"
 import {
   chance,
-  pickNRandomIn,
-  pickRandomIn,
-  shuffleArray
+  PRNG_P_OFFSET_BURIED_SHUFFLE,
+  PRNG_P_OFFSET_FLOWER_POT,
+  PRNG_P_OFFSET_ITEM_PICK,
+  PRNG_P_OFFSET_ITEM_FREE,
+  PRNG_P_OFFSET_BERRY_TREE,
 } from "../../utils/random"
 import { resetArraySchema, schemaValues } from "../../utils/schemas"
 import { Effects } from "../effects"
@@ -95,6 +103,19 @@ import { Pokemon, PokemonClasses } from "./pokemon"
 import { PokemonCustoms } from "./pokemon-customs"
 import Synergies, { computeSynergies, getSynergyStep } from "./synergies"
 import { Wanderer } from "./wanderer"
+
+const BURIED_SPACES = 24
+const WEIGHTS_FOR_BURIED_TRASH: WeightMap = Object.fromEntries([
+  Item.TRASH,
+  Item.LEFTOVERS,
+  Item.COIN,
+  Item.NUGGET,
+  Item.FOSSIL_STONE,
+].map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1]))
+const WEIGHTS_FOR_BURIED_PRECIOUS: WeightMap = Object.fromEntries(ToolsBuried.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1]))
+const weightForBuriedPreciousNonTool = 0.5 * ToolsBuried.length
+WEIGHTS_FOR_BURIED_PRECIOUS[ItemInteger[Item.TREASURE_BOX] + PRNG_P_OFFSET_ITEM_FREE] = weightForBuriedPreciousNonTool
+WEIGHTS_FOR_BURIED_PRECIOUS[ItemInteger[Item.BIG_NUGGET] + PRNG_P_OFFSET_ITEM_FREE] = weightForBuriedPreciousNonTool
 
 export default class Player extends Schema implements IPlayer {
   @type("string") id: string
@@ -136,7 +157,7 @@ export default class Player extends Schema implements IPlayer {
   @type(["string"]) pveRewards = new ArraySchema<Item>()
   @type(["string"]) pveRewardsPropositions = new ArraySchema<Item>()
   @type("float32") loadingProgress: number = 0
-  @type(["string"]) berryTreesType: Item[] = pickNRandomIn(NonSpecialBerries, 3)
+  @type(["string"]) berryTreesType: Item[] = []
   @type(["uint8"]) berryTreesStages: number[] = [1, 1, 1]
   @type([Pokemon]) flowerPots: Pokemon[] = []
   @type("uint8") mulch: number = 0
@@ -165,13 +186,13 @@ export default class Player extends Schema implements IPlayer {
   isBot: boolean
   opponents: Map<string, number> = new Map<string, number>()
   titles: Set<Title> = new Set<Title>()
-  artificialItems: Item[] = pickNRandomIn(ArtificialItems, 3)
-  buriedItems: (Item | null)[] = initBuriedItems()
-  tms: Item[] = pickRandomTMs()
+  artificialItems: Item[] = []
+  buriedItems: (Item | null)[] = new Array(BURIED_SPACES).fill(null)
+  tms: Item[] = []
   weatherRocks: Item[] = []
   randomComponentsGiven: Item[] = []
   randomEggsGiven: Pkm[] = []
-  flowerPotsSpawnOrder: FlowerPot[] = shuffleArray([...FlowerPots])
+  flowerPotsSpawnOrder: FlowerPot[] = []
   lightX: number
   lightY: number
   ghost: boolean = false
@@ -188,6 +209,7 @@ export default class Player extends Schema implements IPlayer {
   shopsSinceLastUnownShop: number = 0
   regions: DungeonPMDO[] = []
   unownReminiscences: number = 0
+  rngState: Haystack
 
   constructor(
     id: string,
@@ -200,7 +222,8 @@ export default class Player extends Schema implements IPlayer {
     pokemonCollection: Map<string, IPokemonCollectionItemMongo>,
     title: Title | "",
     role: Role,
-    state: GameState
+    rngState: Haystack,
+    state: GameState,
   ) {
     super()
     this.id = id
@@ -213,6 +236,24 @@ export default class Player extends Schema implements IPlayer {
     this.rank = rank
     this.title = title
     this.role = role
+    this.rngState = rngState
+
+    this.berryTreesType.push(...randomNeedles(this.rngState, Object.fromEntries(
+      NonSpecialBerries.map(item => [ItemInteger[item] + PRNG_P_OFFSET_BERRY_TREE, 1])
+    ), 3, false).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_BERRY_TREE]))
+    this.artificialItems.push(...randomNeedles(this.rngState, Object.fromEntries(
+      ArtificialItems.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+    ), 3, false).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_FREE]))
+    this.flowerPotsSpawnOrder.push(...randomNeedles(this.rngState, Object.fromEntries(
+      FlowerPots.map(fp => [FlowerPotInteger[fp] + PRNG_P_OFFSET_FLOWER_POT, 1])
+    ), FlowerPots.length, false).map(needleId => FlowerPotByInteger[parseInt(needleId) - PRNG_P_OFFSET_FLOWER_POT]))
+    this.tms.push(...[TMsBronze, TMsSilver, TMsGold].map(items => ItemByInteger[parseInt(
+      randomNeedle(this.rngState, Object.fromEntries(
+        items.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+      ))!
+    ) - PRNG_P_OFFSET_ITEM_FREE]))
+    this.initBuriedItems()
+
     this.pokemonCustoms = new PokemonCustoms(pokemonCollection)
     this.specialGameRule = state.specialGameRule
     this.flowerPots = initFlowerPots(this)
@@ -250,8 +291,9 @@ export default class Player extends Schema implements IPlayer {
     }
 
     if (state.specialGameRule === SpecialGameRule.SLAMINGO) {
-      for (let i = 0; i < 4; i++)
-        this.items.push(pickRandomIn(ItemComponentsNoFossilOrScarf))
+      this.items.push(...randomNeedles(this.rngState, Object.fromEntries(
+        ItemComponentsNoFossilOrScarf.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+      ), 4).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_FREE]))
     }
   }
 
@@ -653,10 +695,9 @@ export default class Player extends Schema implements IPlayer {
         this.choices.push(
           new PlayerChoice({
             type: "wand",
-            items: pickNRandomIn(
-              FAIRY_WANDS_BY_SYNERGY_LEVEL[newFairyLevel - 1],
-              3
-            )
+            items: randomNeedles(this.rngState, Object.fromEntries(
+              FAIRY_WANDS_BY_SYNERGY_LEVEL[newFairyLevel - 1].map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_PICK, 1])
+            ), 3, false).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_PICK]),
           })
         )
       }
@@ -1012,41 +1053,36 @@ export default class Player extends Schema implements IPlayer {
     }, delay)
     return wanderer
   }
-}
 
-function pickRandomTMs() {
-  const bronzeTM = pickRandomIn(TMsBronze)
-  const silverTM = pickRandomIn(TMsSilver)
-  const goldTM = pickRandomIn(TMsGold)
-  return [bronzeTM, silverTM, goldTM]
-}
+  initBuriedItems() {
+    const spaces: WeightMap = {}
+    for (let i = 0; i < BURIED_SPACES; i++) {
+      spaces[i + PRNG_P_OFFSET_BURIED_SHUFFLE] = 1
+    }
 
-function initBuriedItems() {
-  const buriedItems: (Item | null)[] = new Array(24).fill(null)
+    // 3 synergy gems
+    for (let i = 0; i < 3; i++) {
+      this.buriedItems[
+        parseInt(randomNeedles(this.rngState, spaces, 1, false)[0]) - PRNG_P_OFFSET_BURIED_SHUFFLE
+      ] = ItemByInteger[parseInt(
+        randomNeedle(this.rngState, Object.fromEntries(
+          SynergyGemsBuried.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+        ))!
+      ) - PRNG_P_OFFSET_ITEM_FREE]
+    }
 
-  // 3 synergy gems
-  for (let i = 0; i < 3; i++) {
-    buriedItems[i] = pickRandomIn(SynergyGemsBuried)
+    // 4 trash (Trash, Leftovers, Coin, Nugget, Fossil Stone)
+    for (let i = 3; i < 7; i++) {
+      this.buriedItems[
+        parseInt(randomNeedles(this.rngState, spaces, 1, false)[0]) - PRNG_P_OFFSET_BURIED_SHUFFLE
+      ] = ItemByInteger[parseInt(randomNeedle(this.rngState, WEIGHTS_FOR_BURIED_TRASH)!) - PRNG_P_OFFSET_ITEM_FREE]
+    }
+
+    // 1 precious (tool, treasure box, big nugget)
+    this.buriedItems[
+      parseInt(randomNeedles(this.rngState, spaces, 1, false)[0]) - PRNG_P_OFFSET_BURIED_SHUFFLE
+    ] = ItemByInteger[parseInt(randomNeedle(this.rngState, WEIGHTS_FOR_BURIED_PRECIOUS)!) - PRNG_P_OFFSET_ITEM_FREE]
   }
-
-  // 4 trash (Trash, Leftovers, Coin, Nugget, Fossil Stone)
-  for (let i = 3; i < 7; i++) {
-    buriedItems[i] = pickRandomIn([
-      Item.TRASH,
-      Item.LEFTOVERS,
-      Item.COIN,
-      Item.NUGGET,
-      Item.FOSSIL_STONE
-    ])
-  }
-
-  // 1 precious (tool, treasure box, big nugget)
-  buriedItems[7] = chance(1 / 2)
-    ? pickRandomIn(ToolsBuried)
-    : pickRandomIn([Item.TREASURE_BOX, Item.BIG_NUGGET])
-
-  shuffleArray(buriedItems)
-  return buriedItems
 }
 
 function initFlowerPots(player: Player) {

@@ -263,10 +263,10 @@ export default class PreparationRoom extends Room<{ state: PreparationState }> {
       }
     })
 
-    this.onMessage(Transfer.GAME_START_REQUEST, (client) => {
+    this.onMessage(Transfer.GAME_START_REQUEST, (client, message) => {
       logger.info(Transfer.GAME_START_REQUEST, this.roomName)
       try {
-        this.dispatcher.dispatch(new OnGameStartRequestCommand(), { client })
+        this.dispatcher.dispatch(new OnGameStartRequestCommand(), { client, message })
       } catch (error) {
         logger.error(error)
       }

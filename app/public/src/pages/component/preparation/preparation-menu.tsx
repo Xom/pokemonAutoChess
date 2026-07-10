@@ -1,6 +1,7 @@
 import firebase from "firebase/compat/app"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { createPcg32, randomList } from "pcg"
 import {
   BOTS_ENABLED,
   EloRankThreshold,
@@ -13,7 +14,8 @@ import { BotDifficulty, GameMode } from "../../../../../types/enum/Game"
 import { SpecialGameRule } from "../../../../../types/enum/SpecialGameRule"
 import { formatMinMaxRanks } from "../../../../../utils/elo"
 import { throttle } from "../../../../../utils/function"
-import { max } from "../../../../../utils/number"
+import { BIGTWO64, max } from "../../../../../utils/number"
+import { shuffleArray, randomUint64, pcgRandomUint64, PRNG_N_DEFAULT_PLAYER_SEED } from "../../../../../utils/random"
 import { setTitleNotificationIcon } from "../../../../../utils/window"
 import { useAppSelector } from "../../../hooks"
 import {
@@ -115,6 +117,40 @@ export default function PreparationMenu() {
 
   const startGame = throttle(async function startGame() {
     if (rooms.preparation) {
+
+      if (gameMode === GameMode.CUSTOM_LOBBY) {
+        const defaultNonPlayerSeed = randomUint64()
+        const defaultPlayerSeeds = shuffleArray(randomList(users.length, pcgRandomUint64, createPcg32({}, defaultNonPlayerSeed, PRNG_N_DEFAULT_PLAYER_SEED)).map(a => a[0]))
+        const userInput = window.prompt(`Specify seeds (non-negative integer less than 2^64), separated by space. The defaults here are random. You might also copy the seeds for later note. First the non-player-specific seed, then seeds for players in the following order:\n${users.map((u) => u.name).join('\n')}`, `${defaultNonPlayerSeed} ${defaultPlayerSeeds.join(' ')}`)
+        if (userInput === null) {
+          return
+        }
+        const trimmed = userInput.trim()
+        const inputs = trimmed.split(/\s+/)
+        if (inputs.length !== users.length + 1) {
+          window.alert(`Expected ${users.length + 1} seeds, but got ${inputs.length}.`)
+          return
+        }
+        const seeds = {}
+        for (let i = 0; i < inputs.length; i++) {
+          const s = inputs[i];
+          if (!/^\d+$/.test(s)) {
+            window.alert(`Invalid seed: ${s}`)
+            return
+          }
+          if (BigInt(s) >= BIGTWO64) {
+            window.alert(`Invalid seed: ${s}\nSeed must be 18446744073709551615 or less.`)
+            return
+          }
+          seeds[i === 0 ? '-1' : users[i - 1].uid] = s
+        }
+        const token = await firebase.auth().currentUser?.getIdToken()
+        if (token) {
+          gameStartRequest(token, seeds)
+        }
+        return
+      }
+
       const token = await firebase.auth().currentUser?.getIdToken()
       if (token) {
         gameStartRequest(token)

@@ -1,3 +1,4 @@
+import { randomNeedle, randomNeedles } from "shuffle-duplication"
 import { SetSchema } from "@colyseus/schema"
 import { getUnownsPoolPerStage, RarityCost } from "../../config"
 import PokemonFactory from "../../models/pokemon-factory"
@@ -10,14 +11,21 @@ import {
   Dishes,
   Item,
   ItemComponents,
-  Sweets
+  Sweets,
+  ItemInteger,
+  ItemByInteger,
 } from "../../types/enum/Item"
 import { Pkm, Unowns } from "../../types/enum/Pokemon"
 import { Synergy } from "../../types/enum/Synergy"
 import { isIn } from "../../utils/array"
 import { getFirstAvailablePositionInBench } from "../../utils/board"
 import { clamp, min } from "../../utils/number"
-import { pickNRandomIn, pickRandomIn, randomWeighted } from "../../utils/random"
+import {
+  randomWeighted,
+  pickRandomIn,
+  pickNRandomIn,
+  PRNG_P_OFFSET_ITEM_FREE,
+} from "../../utils/random"
 import type { Board } from "../board"
 import { giveRandomEgg } from "../eggs"
 import { getHatchTime } from "../evolution-logic/hatch-time"
@@ -123,6 +131,9 @@ export class HiddenPowerFStrategy extends HiddenPowerStrategy {
 
     if (player && !unown.isGhostOpponent && !player.isBot) {
       for (let i = 0; i < nbFishes; i++) {
+        if (getFirstAvailablePositionInBench(player.board) === null) {
+          break
+        }
         const fish = unown.simulation.room.state.shop.pickFish(
           player,
           Item.SUPER_ROD,
@@ -160,7 +171,13 @@ export class HiddenPowerIStrategy extends HiddenPowerStrategy {
   process(unown: PokemonEntity, board: Board, target: null, crit: boolean) {
     super.process(unown, board, target, crit)
     if (unown.player && !unown.isGhostOpponent) {
-      unown.player.items.push(pickRandomIn(ItemComponents))
+      unown.player.items.push(
+        ItemByInteger[parseInt(
+          randomNeedle(unown.player.rngState, Object.fromEntries(
+            ItemComponents.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+          ))!
+        ) - PRNG_P_OFFSET_ITEM_FREE]
+      )
     }
   }
 }
@@ -346,10 +363,11 @@ export class HiddenPowerTStrategy extends HiddenPowerStrategy {
   process(unown: PokemonEntity, board: Board, target: null, crit: boolean) {
     super.process(unown, board, target, crit)
     if (unown.player && !unown.isGhostOpponent) {
-      const player = unown.player
-      pickNRandomIn(Berries, 3).forEach((item) => {
-        player.items.push(item)
-      })
+      unown.player.items.push(
+        ...randomNeedles(unown.player.rngState, Object.fromEntries(
+          Berries.map(item => [ItemInteger[item] + PRNG_P_OFFSET_ITEM_FREE, 1])
+        ), 3, false).map(needleId => ItemByInteger[parseInt(needleId) - PRNG_P_OFFSET_ITEM_FREE])
+      )
     }
   }
 }

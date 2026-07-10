@@ -302,6 +302,14 @@ export enum DungeonPMDO {
   ZeroIsleSouth2 = "ZeroIsleSouth2"
 }
 
+export const DungeonInteger: { [key in DungeonPMDO]: number } = Object.fromEntries(
+  Object.values(DungeonPMDO).map((d, i) => [d, i + 1]) // reserve 0 to mean none
+) as { [key in DungeonPMDO]: number };
+
+export const DungeonByInteger: { [index: string]: DungeonPMDO } = Object.fromEntries(
+  Object.entries(DungeonInteger).map(([d, indexInteger]) => [indexInteger.toString(), d as DungeonPMDO])
+)
+
 export const DungeonMusicCredits: { [key in DungeonMusic]?: string } = {
   [DungeonMusic.TROUBLE_IN_TOWN]: "John Rei",
   [DungeonMusic.TREASURE_TOWN_STAGE_0_ALT]: "John Rei",

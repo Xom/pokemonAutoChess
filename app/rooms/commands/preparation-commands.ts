@@ -28,7 +28,7 @@ import type { SpecialGameRule } from "../../types/enum/SpecialGameRule"
 import type { IBot } from "../../types/models/bot-v2"
 import { getRank } from "../../utils/elo"
 import { logger } from "../../utils/logger"
-import { max } from "../../utils/number"
+import { BIGTWO64, max } from "../../utils/number"
 import { cleanProfanity } from "../../utils/profanity-filter"
 import { pickRandomIn } from "../../utils/random"
 import { schemaEntries, schemaValues } from "../../utils/schemas"
@@ -188,9 +188,10 @@ export class OnGameStartRequestCommand extends Command<
   PreparationRoom,
   {
     client?: Client
+    message?: Record<string, string | null>
   }
 > {
-  async execute({ client }: { client?: Client } = {}) {
+  async execute({ client, message }: { client?: Client; message?: Record<string, Record<string, string> | string | null> } = {}) {
     try {
       if (this.state.gameStartedAt != null) {
         return // game already started
@@ -279,6 +280,19 @@ export class OnGameStartRequestCommand extends Command<
           avatar: "0025/Pain"
         })
       } else {
+        const seeds = {};
+        if (this.state.gameMode == GameMode.CUSTOM_LOBBY && message && message.seeds) {
+          const s = message.seeds['-1'];
+          if (s && /^\d+$/.test(s) && BigInt(s) < BIGTWO64) {
+            seeds['-1'] = s;
+          }
+          this.state.users.forEach((u: GameUser) => {
+            const s = message.seeds && message.seeds[u.uid]
+            if (s && /^\d+$/.test(s) && BigInt(s) < BIGTWO64) {
+              seeds[u.uid] = s;
+            }
+          })
+        }
         this.state.gameStartedAt = new Date().toISOString()
         this.room.lock()
         this.room.autoDispose = true // re-enable auto dispose for tournament games
@@ -292,7 +306,8 @@ export class OnGameStartRequestCommand extends Command<
           specialGameRule: this.state.specialGameRule,
           tournamentId: this.room.metadata?.tournamentId,
           bracketId: this.room.metadata?.bracketId,
-          minRank: this.state.minRank
+          minRank: this.state.minRank,
+          seeds: seeds,
         })
 
         this.state.users.forEach((user) => {

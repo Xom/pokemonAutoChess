@@ -5,6 +5,7 @@ import {
   SetSchema,
   type
 } from "@colyseus/schema"
+import type { Haystack } from "shuffle-duplication"
 import {
   BOARD_HEIGHT,
   BOARD_WIDTH,
@@ -68,6 +69,7 @@ export default class GameState extends Schema {
   maxRank: EloRank | null = null
   outlawStage: number | null = null
   treasureBoxRewardGiven: TreasureBoxReward = getTreasureBoxReward()
+  nonPlayerRngState: Haystack
 
   constructor(
     preparationId: string,
@@ -76,7 +78,8 @@ export default class GameState extends Schema {
     gameMode: GameMode,
     minRank: EloRank | null,
     maxRank: EloRank | null,
-    specialGameRule: SpecialGameRule | null
+    specialGameRule: SpecialGameRule | null,
+    nonPlayerRngState: Haystack,
   ) {
     super()
     this.preparationId = preparationId
@@ -87,6 +90,7 @@ export default class GameState extends Schema {
     this.minRank = minRank
     this.maxRank = maxRank
     this.weather = Weather.NEUTRAL
+    this.nonPlayerRngState = nonPlayerRngState
 
     if (gameMode === GameMode.SCRIBBLE) {
       this.specialGameRule = pickRandomIn(Object.values(SpecialGameRule))

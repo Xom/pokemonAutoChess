@@ -1181,3 +1181,11 @@ export const RemovableItems = [
   ...Scarves,
   ...MemoryDiscs
 ] satisfies Item[]
+
+export const ItemInteger: { [key in Item]: number } = Object.fromEntries(
+  Object.values(Item).map((item, i) => [item, i + 1]) // reserve 0 to mean none
+) as { [key in Item]: number };
+
+export const ItemByInteger: { [index: string]: Item } = Object.fromEntries(
+  Object.entries(ItemInteger).map(([item, indexInteger]) => [indexInteger.toString(), item as Item])
+)

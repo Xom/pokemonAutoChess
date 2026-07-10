@@ -1,3 +1,16 @@
+export const TWO32 = 2 ** 32
+export const INV_TWO32 = 2 ** -32
+
+// ECMAScript version target for client lacks BigInt literal
+const BIG2 = BigInt(2)
+const BIG32 = BigInt(32)
+const BIG64 = BigInt(64)
+export const BIGTWO64 = BIG2 ** BIG64
+
+export function uint64(hi: number, lo: number): bigint {
+  return (BigInt(hi) << BIG32) | BigInt(lo)
+}
+
 export const min =
   (minimum: number) =>
   (value: number): number =>
